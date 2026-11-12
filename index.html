@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<!--
+  Доска расследований · версия 0
+  Всё лежит в одном файле:
+    <style>  — внешний вид (цвета, шрифты, карточки);
+    <body>   — каркас страницы (панель, доска, окна);
+    <script> — поведение (перетаскивание, нити, сохранение).
+  Записи доски хранятся в браузере (localStorage), в файл они не попадают.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Средневековая доска расследований для D&D: записи, улики и красные нити между ними.">
+<title>Доска расследований</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,600;1,400&family=Alegreya+SC:wght@500;700&family=Kurale&family=Marck+Script&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Идея: тёмная деревянная панель над пробковой доской; пергаментные записи висят на латунных булавках, их связывает красная нить. */
+  --wood:#1e140d;
+  --cork:#7a5734;
+  --parchment:#ead9b2;
+  --ink:#2a1c11;
+  --yarn:#a8231c;
+  --brass:#c39243;
+  --font-display:"Kurale","Alegreya",Georgia,"Times New Roman",serif;
+  --font-body:"Alegreya",Georgia,"Times New Roman",serif;
+  --font-ui:"Alegreya SC","Alegreya",Georgia,serif;
+  --font-hand:"Marck Script","Alegreya",Georgia,cursive;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--wood);color:var(--parchment);
+  font-family:var(--font-body);-webkit-tap-highlight-color:transparent;
+}
+
+/* ── Верхняя панель ─────────────────────────────── */
+.bar{
+  position:relative;z-index:10;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;
+  padding:8px 16px;background:linear-gradient(#2f2015,var(--wood));
+  border-bottom:2px solid #5a3d1e;box-shadow:0 2px 0 rgba(195,146,67,.22);
+}
+.brand{display:flex;flex-direction:column;min-width:0;flex:1 1 240px}
+.brand small{font-family:var(--font-ui);font-size:13px;letter-spacing:.12em;color:var(--brass)}
+.case{
+  font-family:var(--font-display);font-size:20px;line-height:1.25;color:#f4e7c8;
+  padding:1px 4px;margin-left:-4px;border-radius:4px;outline:none;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;
+}
+.case:hover{background:rgba(255,240,210,.05)}
+.case:focus{white-space:normal;background:rgba(255,240,210,.07);box-shadow:0 0 0 1px var(--brass)}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.status{flex-basis:100%;font-size:13px;font-style:italic;color:#b9a27a;margin-top:-4px;min-height:1em}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:6px 14px;
+  font-family:var(--font-ui);font-size:16px;letter-spacing:.03em;color:#efdfbd;cursor:pointer;
+  background:linear-gradient(#3d2918,#2a1b10);border:1px solid #6b4a24;border-radius:6px;
+}
+.btn:hover{border-color:var(--brass)}
+.btn:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
+.btn.primary{background:linear-gradient(#ddb262,#a8772f);color:#23160a;border-color:#e8c27a;font-weight:700}
+.btn[aria-pressed="true"]{background:linear-gradient(#b3322a,#7d1712);border-color:#e06a5c;color:#fff2e8}
+.btn.ghost{background:transparent}
+.btn.danger{color:#ffd9cf;border-color:#9b3a2c}
+.btn.danger.confirm{background:#8a1a12;border-color:#d0574a}
+
+/* ── Доска ──────────────────────────────────────── */
+.board{position:relative;flex:1;overflow:hidden;touch-action:none;background-color:var(--cork)}
+.board.panning{cursor:grabbing}
+.frame{
+  position:absolute;inset:0;z-index:8;pointer-events:none;
+  box-shadow:inset 0 0 0 9px #2a1a0e,inset 0 0 0 11px rgba(195,146,67,.45),inset 0 0 0 13px #170e08,inset 0 0 90px 12px rgba(0,0,0,.55);
+}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.threads{position:absolute;left:-5000px;top:-5000px;width:20000px;height:20000px;overflow:visible;pointer-events:none;z-index:4}
+.threads .shadow{fill:none;stroke:rgba(20,8,2,.38);stroke-width:3;stroke-linecap:round}
+.threads .yarn{fill:none;stroke:var(--yarn);stroke-width:2.6;stroke-linecap:round}
+.threads .sheen{fill:none;stroke:rgba(255,190,170,.35);stroke-width:.8;stroke-linecap:round}
+.threads .hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.threads .pinshadow{fill:rgba(0,0,0,.4)}
+.threads .pinhead{fill:url(#brass);stroke:#4a2f0e;stroke-width:.8}
+.tag{
+  position:absolute;z-index:5;transform:translate(-50%,-50%) rotate(-2deg);cursor:pointer;white-space:nowrap;
+  padding:1px 10px 3px;font-family:var(--font-hand);font-size:17px;line-height:1.2;color:#3a0f0b;
+  background:#ead6a8;border-radius:2px;box-shadow:0 2px 5px rgba(0,0,0,.4);
+}
+
+/* ── Записи ─────────────────────────────────────── */
+.card{
+  --k:#5a4a38;--paper:var(--parchment);
+  position:absolute;left:0;top:0;z-index:3;width:200px;padding:22px 15px 14px;
+  color:var(--ink);cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;
+  background:
+    radial-gradient(120% 80% at 25% 12%,rgba(255,251,236,.6),transparent 60%),
+    radial-gradient(90% 70% at 88% 96%,rgba(122,80,38,.24),transparent 62%),
+    var(--paper);
+  border-radius:3px 2px 4px 2px;transform-origin:100px 0;
+  box-shadow:0 1px 0 rgba(0,0,0,.1),0 10px 18px -6px rgba(0,0,0,.6);
+}
+.card::before{content:"";position:absolute;inset:5px;border:1px solid rgba(92,60,28,.28);border-radius:2px;pointer-events:none}
+.card.selected,.card.dragging{z-index:6}
+.card.selected{outline:2px dashed var(--brass);outline-offset:5px}
+.card.dragging{cursor:grabbing;box-shadow:0 26px 32px -12px rgba(0,0,0,.65)}
+.card.link-source{box-shadow:0 0 0 3px var(--yarn),0 10px 18px -6px rgba(0,0,0,.6)}
+.card:focus-visible{outline:2px solid #f3d48a;outline-offset:5px}
+.pin{
+  position:absolute;left:50%;top:-8px;width:16px;height:16px;margin-left:-8px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#fbe7b0 0,#c39243 42%,#5c3b12 100%);box-shadow:0 3px 3px rgba(0,0,0,.5);
+}
+.kind{display:flex;align-items:center;gap:7px;margin-bottom:7px;font-family:var(--font-ui);font-size:14px;letter-spacing:.08em;color:var(--k)}
+.kind::after{content:"";flex:1;height:1px;background:currentColor;opacity:.35}
+.glyph{display:inline-grid;place-items:center;width:23px;height:23px;border-radius:50%;background:var(--k);color:#f7ecd2;font-family:var(--font-display);font-size:14px;line-height:1}
+.card h3{margin:0 0 5px;font-family:var(--font-display);font-weight:400;font-size:19px;line-height:1.15;text-wrap:balance}
+.card p{margin:0;font-size:15px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}
+.stamp{
+  display:inline-block;margin-top:10px;padding:1px 8px;border:2px solid rgba(150,24,18,.8);border-radius:3px;
+  font-family:var(--font-ui);font-weight:700;font-size:13px;letter-spacing:.1em;color:rgba(150,24,18,.9);transform:rotate(-5deg);
+}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.actions button{
+  flex:1 1 auto;min-height:36px;padding:4px 8px;cursor:pointer;
+  font-family:var(--font-ui);font-size:14px;color:var(--ink);
+  background:rgba(255,255,255,.4);border:1px solid rgba(60,36,16,.45);border-radius:5px;
+}
+.actions button:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.actions .danger{color:#8a1a12}
+.actions .confirm{background:#8a1a12;border-color:#8a1a12;color:#fff2e8}
+
+/* ── Плавающие элементы ─────────────────────────── */
+.zoom{position:absolute;right:22px;bottom:22px;z-index:9;display:flex;flex-direction:column;gap:6px}
+.zoom .btn{width:44px;height:44px;padding:0;font-family:var(--font-body);font-size:22px}
+.banner{
+  position:absolute;left:50%;top:22px;z-index:9;transform:translateX(-50%);display:none;align-items:center;gap:12px;
+  max-width:calc(100% - 44px);padding:8px 10px 8px 16px;color:#f4e7c8;background:#2a1b10;
+  border:1px solid var(--yarn);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.5);font-size:16px;
+}
+.banner.show{display:flex}
+.hint{
+  position:absolute;left:22px;bottom:22px;z-index:9;max-width:min(340px,calc(100% - 100px));padding:12px 14px;
+  color:var(--ink);background:var(--parchment);border-radius:4px;box-shadow:0 10px 24px rgba(0,0,0,.45);font-size:15px;line-height:1.4;
+}
+.hint b{display:block;margin-bottom:4px;font-family:var(--font-display);font-weight:400;font-size:18px}
+.hint .btn{margin-top:8px;min-height:34px;color:var(--ink);background:rgba(255,255,255,.45);border-color:rgba(60,36,16,.45)}
+.hint[hidden]{display:none}
+.empty{
+  position:absolute;left:50%;top:45%;z-index:2;transform:translate(-50%,-50%);width:min(360px,calc(100% - 48px));
+  padding:18px 20px;text-align:center;color:#f4e7c8;background:rgba(30,20,13,.7);border:1px dashed rgba(234,217,178,.5);border-radius:6px;font-size:17px;
+}
+.empty[hidden]{display:none}
+
+/* ── Окна ───────────────────────────────────────── */
+.modal{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(10,6,3,.62)}
+.modal.show{display:flex}
+.sheet{
+  position:relative;width:min(540px,100%);max-height:100%;overflow:auto;padding:24px 22px 18px;color:var(--ink);
+  background:radial-gradient(120% 70% at 20% 10%,rgba(255,251,236,.55),transparent 60%),#ecdcb8;
+  border-radius:4px;box-shadow:0 20px 50px rgba(0,0,0,.6);
+}
+.sheet h2{margin:0 0 14px;font-family:var(--font-display);font-weight:400;font-size:25px;line-height:1.2}
+.sheet p{margin:0 0 12px;font-size:16px;line-height:1.45}
+.sheet hr{border:0;border-top:1px solid rgba(92,60,28,.3);margin:18px 0}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.lbl{font-family:var(--font-ui);font-size:15px;letter-spacing:.05em;color:#5a3d22}
+.sheet input[type="text"],.sheet textarea,.sheet select{
+  width:100%;padding:9px 11px;font:inherit;font-size:16px;color:var(--ink);
+  background:#f7ecd2;border:1px solid rgba(70,44,20,.45);border-radius:4px;
+}
+.sheet textarea{min-height:110px;resize:vertical;line-height:1.4}
+.sheet textarea.code{font-family:ui-monospace,Consolas,monospace;font-size:13px;min-height:120px}
+.sheet input:focus-visible,.sheet textarea:focus-visible,.sheet select:focus-visible{outline:2px solid #8a5a1e;outline-offset:1px}
+.types{display:flex;flex-wrap:wrap;gap:6px}
+.types input{position:absolute;opacity:0;pointer-events:none}
+.types label{
+  display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 12px;cursor:pointer;
+  font-family:var(--font-ui);font-size:15px;color:var(--k);background:#f7ecd2;border:1px solid rgba(70,44,20,.4);border-radius:999px;
+}
+.types input:checked+label{color:#f8eed6;background:var(--k);border-color:var(--k)}
+.types input:focus-visible+label{outline:2px solid var(--ink);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:6px}
+.row.left{justify-content:flex-start}
+.sheet .btn{color:#f4e7c8}
+.sheet .btn.primary{color:#23160a}
+.sheet .btn.ghost{color:var(--ink);border-color:rgba(60,36,16,.45)}
+.sheet .btn.danger{color:#8a1a12;background:transparent;border-color:rgba(138,26,18,.6)}
+.sheet .btn.danger.confirm{color:#fff2e8;background:#8a1a12}
+.file{font-size:15px}
+.note{font-size:14px;font-style:italic;color:#6b4e2e}
+
+@media (max-width:560px){
+  .bar{padding:8px 12px}
+  .case{font-size:18px}
+  .btn{padding:6px 11px;font-size:15px}
+  .zoom{right:16px;bottom:16px}
+  .hint{left:16px;bottom:16px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .card{transition:box-shadow .15s ease}
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <small>доска расследований · v0</small>
+    <div id="case" class="case" contenteditable="true" spellcheck="false" role="textbox" aria-label="Название дела"></div>
+  </div>
+  <div class="tools">
+    <button id="addBtn" class="btn primary" type="button">+ Запись</button>
+    <button id="linkBtn" class="btn" type="button" aria-pressed="false">Нить</button>
+    <button id="scrollBtn" class="btn" type="button">Свиток</button>
+  </div>
+  <div id="status" class="status" aria-live="polite"></div>
+</header>
+
+<main id="board" class="board" aria-label="Доска">
+  <div id="world" class="world">
+    <div id="cards"></div>
+    <svg id="threads" class="threads" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="brass" cx="35%" cy="30%" r="70%">
+          <stop offset="0" stop-color="#fbe7b0"/>
+          <stop offset=".42" stop-color="#c39243"/>
+          <stop offset="1" stop-color="#5c3b12"/>
+        </radialGradient>
+      </defs>
+      <g id="threadLayer" transform="translate(5000 5000)"></g>
+    </svg>
+    <div id="tags"></div>
+  </div>
+  <div class="frame"></div>
+  <div id="empty" class="empty" hidden>Доска пуста. Нажми «+ Запись», чтобы приколоть первую улику.</div>
+  <div id="banner" class="banner" role="status">
+    <span id="bannerText"></span>
+    <button id="bannerCancel" class="btn" type="button">Отмена</button>
+  </div>
+  <div id="hint" class="hint" hidden>
+    <b>Как пользоваться</b>
+    Перетаскивай записи. Одно нажатие на запись открывает действия, двойное — правку. Масштаб: колёсико мыши или два пальца.
+    <br><button id="hintOk" class="btn" type="button">Понятно</button>
+  </div>
+  <div class="zoom">
+    <button id="zoomIn" class="btn" type="button" aria-label="Приблизить">+</button>
+    <button id="zoomOut" class="btn" type="button" aria-label="Отдалить">−</button>
+    <button id="zoomFit" class="btn" type="button" aria-label="Показать всю доску" title="Показать всю доску">⤢</button>
+  </div>
+</main>
+
+<!-- Окно: запись -->
+<div id="cardModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
+  <form id="cardForm" class="sheet">
+    <h2 id="cardModalTitle">Новая запись</h2>
+    <div class="field">
+      <span class="lbl">Что это</span>
+      <div id="typeChips" class="types"></div>
+    </div>
+    <div class="field">
+      <label class="lbl" for="fTitle">Заголовок</label>
+      <input id="fTitle" type="text" maxlength="120" autocomplete="off" placeholder="Например: Ирма, вдова мельника">
+    </div>
+    <div class="field">
+      <label class="lbl" for="fText">Что известно</label>
+      <textarea id="fText" maxlength="2000" placeholder="Что видели, что сказали, что не сходится…"></textarea>
+    </div>
+    <div class="field">
+      <label class="lbl" for="fStamp">Печать</label>
+      <select id="fStamp"></select>
+    </div>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Приколоть</button>
+    </div>
+  </form>
+</div>
+
+<!-- Окно: нить -->
+<div id="threadModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="threadModalTitle">
+  <form id="threadForm" class="sheet">
+    <h2 id="threadModalTitle">Нить</h2>
+    <p id="threadEnds"></p>
+    <div class="field">
+      <label class="lbl" for="fLabel">Подпись на нити</label>
+      <input id="fLabel" type="text" maxlength="60" autocomplete="off" placeholder="Например: видела последней">
+    </div>
+    <div class="row">
+      <button id="cutBtn" type="button" class="btn danger">Перерезать нить</button>
+      <button type="button" class="btn ghost" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Сохранить</button>
+    </div>
+  </form>
+</div>
+
+<!-- Окно: свиток (перенос доски) -->
+<div id="scrollModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="scrollModalTitle">
+  <div class="sheet">
+    <h2 id="scrollModalTitle">Свиток доски</h2>
+    <p>Доска сохраняется сама, но только в этом браузере. Чтобы перенести её на другое устройство или показать мастеру, скопируй свиток и вставь его там.</p>
+    <div class="field">
+      <label class="lbl" for="exportText">Свиток этой доски</label>
+      <textarea id="exportText" class="code" readonly></textarea>
+    </div>
+    <div class="row left">
+      <button id="copyBtn" type="button" class="btn primary">Скопировать свиток</button>
+    </div>
+    <hr>
+    <div class="field">
+      <label class="lbl" for="importText">Вставить свиток (заменит текущую доску)</label>
+      <textarea id="importText" class="code" placeholder="Вставь сюда скопированный свиток"></textarea>
+    </div>
+    <div class="row left">
+      <button id="importBtn" type="button" class="btn">Загрузить из текста</button>
+      <label class="btn ghost file" for="importFile">Выбрать файл…</label>
+      <input id="importFile" type="file" accept=".json,.txt,application/json,text/plain" hidden>
+    </div>
+    <p id="importMsg" class="note" aria-live="polite"></p>
+    <hr>
+    <div class="row left">
+      <button id="demoBtn" type="button" class="btn ghost">Вернуть пример</button>
+      <button id="clearBtn" type="button" class="btn danger">Очистить доску</button>
+    </div>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close>Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ── Настройки ──────────────────────────────────────────
+   Типы записей. Чтобы добавить новый тип, допиши строку сюда:
+   он сам появится и в окне записи, и на доске. */
+const TYPES = {
+  person:   { label:'Персонаж', glyph:'♞', color:'#7b2d1d', paper:'#ecdcb6' },
+  place:    { label:'Место',    glyph:'♜', color:'#3f5b3a', paper:'#e4d6ad' },
+  clue:     { label:'Улика',    glyph:'❖', color:'#8a6418', paper:'#efe0bb' },
+  event:    { label:'Событие',  glyph:'☾', color:'#2f405e', paper:'#e7d7b6' },
+  question: { label:'Вопрос',   glyph:'?', color:'#5e2f5a', paper:'#efe3c6' },
+  note:     { label:'Заметка',  glyph:'✎', color:'#5a4a38', paper:'#eadfc4' }
+};
+const STAMPS = ['', 'Подозреваемый', 'Важно', 'Пропал', 'Мёртв', 'Раскрыто', 'Ложный след'];
+const STORE_KEY = 'dnd-investigation-board-v1';
+const HINT_KEY = 'dnd-investigation-board-hint-seen';
+const CARD_W = 200, TILE = 240, MIN_S = 0.2, MAX_S = 2.5;
+
+/* ── Пример дела ── */
+function demoBoard(){
+  return {
+    title:'Дело о пропавшем кузнеце · Вороний Брод',
+    cards:[
+      { id:'tavern', type:'place',    x:40,  y:40,  stamp:'', title:'Таверна «Хромой гусь»', text:'Хозяин Борс клянётся, что Гаррет пил в долг. Комната наверху всегда заперта.' },
+      { id:'moon',   type:'event',    x:640, y:20,  stamp:'', title:'Ночь новолуния', text:'Гаррет пропал в новолуние. Год назад в ту же ночь исчез пастух.' },
+      { id:'sign',   type:'clue',     x:900, y:60,  stamp:'Важно', title:'Знак на двери кузни', text:'Три когтя в круге, выжжены. Жрец побледнел, увидев рисунок.' },
+      { id:'irma',   type:'person',   x:320, y:330, stamp:'Подозреваемый', title:'Ирма, вдова мельника', text:'Видела Гаррета последней: шёл к старому броду с фонарём. Нервничает, когда спрашивают о долге.' },
+      { id:'garret', type:'person',   x:660, y:300, stamp:'Пропал', title:'Гаррет Кривая Подкова', text:'Кузнец Вороньего Брода. Пропал три ночи назад. Дверь кузни заперта изнутри.' },
+      { id:'anselm', type:'person',   x:1080, y:400, stamp:'', title:'Брат Ансельм, жрец', text:'Узнал знак, но молчит. По ночам ходит в сторону болот.' },
+      { id:'debt',   type:'question', x:30,  y:640, stamp:'', title:'Кому Гаррет был должен?', text:'Борсу? Ирме? Или кому-то за болотами?' },
+      { id:'hammer', type:'clue',     x:420, y:680, stamp:'', title:'Молот в болотной тине', text:'Найден у мельничного колеса. Тина болотная, а не речная.' }
+    ],
+    links:[
+      { id:'l1', from:'irma',   to:'garret', label:'видела последней' },
+      { id:'l2', from:'hammer', to:'garret', label:'его молот' },
+      { id:'l3', from:'hammer', to:'irma',   label:'у её мельницы' },
+      { id:'l4', from:'sign',   to:'anselm', label:'узнал знак' },
+      { id:'l5', from:'sign',   to:'moon',   label:'' },
+      { id:'l6', from:'moon',   to:'garret', label:'' },
+      { id:'l7', from:'tavern', to:'debt',   label:'пил в долг' },
+      { id:'l8', from:'debt',   to:'irma',   label:'долг?' },
+      { id:'l9', from:'anselm', to:'hammer', label:'болота' }
+    ]
+  };
+}
+
+/* ── Помощники ── */
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+const uid = () => 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const cleanId = v => String(v == null ? '' : v).replace(/[^\w-]/g,'').slice(0,40);
+const num = (v,d) => (typeof v === 'number' && isFinite(v)) ? v : d;
+function rotFor(id){ let h = 0; for (const ch of String(id)) h = (h*31 + ch.charCodeAt(0)) | 0; return ((Math.abs(h) % 50) - 25) / 10; }
+
+/* Проверяет и чинит данные доски (из браузера или из свитка). */
+function normalize(data){
+  if (!data || typeof data !== 'object' || !Array.isArray(data.cards)) throw new Error('В свитке не нашлось записей.');
+  const ids = new Set(), cards = [];
+  for (const raw of data.cards){
+    if (!raw || typeof raw !== 'object') continue;
+    let id = cleanId(raw.id) || uid();
+    while (ids.has(id)) id = uid();
+    ids.add(id);
+    cards.push({
+      id,
+      type: TYPES[raw.type] ? raw.type : 'note',
+      title: String(raw.title == null ? '' : raw.title).slice(0,120),
+      text: String(raw.text == null ? '' : raw.text).slice(0,2000),
+      stamp: String(raw.stamp == null ? '' : raw.stamp).slice(0,24),
+      x: Math.round(num(raw.x, 0)), y: Math.round(num(raw.y, 0)),
+      rot: num(raw.rot, rotFor(id))
+    });
+  }
+  const links = [], seen = new Set();
+  for (const l of (Array.isArray(data.links) ? data.links : [])){
+    if (!l) continue;
+    const from = cleanId(l.from), to = cleanId(l.to);
+    const key = [from,to].sort().join('|');
+    if (!ids.has(from) || !ids.has(to) || from === to || seen.has(key)) continue;
+    seen.add(key);
+    links.push({ id: cleanId(l.id) || uid(), from, to, label: String(l.label == null ? '' : l.label).slice(0,60) });
+  }
+  return { title: String(data.title || 'Новое дело').slice(0,100), cards, links };
+}
+
+function loadSaved(){
+  try { const raw = localStorage.getItem(STORE_KEY); if (raw) return normalize(JSON.parse(raw)); } catch (_) {}
+  return null;
+}
+
+/* ── Состояние ── */
+let state = loadSaved() || normalize(demoBoard());
+let view = { x:0, y:0, s:1 };
+let selected = null;       // id выбранной записи
+let linkMode = null;       // { from: id | null } — режим «тянем нить»
+let dragging = null;       // id записи, которую тащат
+let editingId = null;      // id записи в окне правки (null — новая)
+let editingLink = null;    // id нити в окне нити
+let userMoved = false;
+
+const board = $('board'), world = $('world'), cardsEl = $('cards'), threadLayer = $('threadLayer'), tagsEl = $('tags');
+const byId = id => state.cards.find(c => c.id === id);
+
+/* ── Сохранение ── */
+let saveTimer = null, statusTimer = null;
+function setStatus(text, transient){
+  $('status').textContent = text;
+  clearTimeout(statusTimer);
+  if (transient) statusTimer = setTimeout(() => { $('status').textContent = 'Сохранено в этом браузере'; }, 3500);
+}
+function save(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); if (!statusTimer || !$('status').textContent) setStatus('Сохранено в этом браузере'); }
+    catch (_) { setStatus('Браузер не даёт сохранить. Перенеси доску через «Свиток».'); }
+  }, 250);
+}
+
+/* ── Пробковая текстура (рисуется один раз) ── */
+function corkTexture(){
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = TILE;
+    const g = c.getContext('2d');
+    g.fillStyle = '#7a5734'; g.fillRect(0,0,TILE,TILE);
+    let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 2200; i++){
+      const x = rnd()*TILE, y = rnd()*TILE, r = rnd()*1.7 + .35, a = rnd()*Math.PI, dark = rnd() < .55;
+      g.fillStyle = dark ? `rgba(38,20,8,${.12 + rnd()*.34})` : `rgba(222,180,120,${.06 + rnd()*.22})`;
+      for (const ox of [-TILE,0,TILE]) for (const oy of [-TILE,0,TILE]){
+        const px = x + ox, py = y + oy;
+        if (px < -4 || py < -4 || px > TILE+4 || py > TILE+4) continue;
+        g.beginPath(); g.ellipse(px, py, r*1.5, r, a, 0, Math.PI*2); g.fill();
+      }
+    }
+    board.style.backgroundImage = `url(${c.toDataURL()})`;
+  } catch (_) {}
+}
+
+/* ── Вид (сдвиг и масштаб) ── */
+function applyView(){
+  world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.s})`;
+  board.style.backgroundSize = `${TILE*view.s}px ${TILE*view.s}px`;
+  board.style.backgroundPosition = `${view.x}px ${view.y}px`;
+}
+function zoomAt(cx, cy, s){
+  const r = board.getBoundingClientRect();
+  const wx = (cx - r.left - view.x) / view.s, wy = (cy - r.top - view.y) / view.s;
+  view.s = clamp(s, MIN_S, MAX_S);
+  view.x = cx - r.left - wx*view.s; view.y = cy - r.top - wy*view.s;
+  applyView();
+}
+function zoomCenter(f){ const r = board.getBoundingClientRect(); userMoved = true; zoomAt(r.left + r.width/2, r.top + r.height/2, view.s*f); }
+function fit(){
+  const r = board.getBoundingClientRect();
+  if (!state.cards.length){ view = { x:r.width/2 - CARD_W/2, y:r.height/2 - 80, s:1 }; applyView(); return; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const el of cardsEl.children){
+    const c = byId(el.dataset.id); if (!c) continue;
+    x0 = Math.min(x0, c.x); y0 = Math.min(y0, c.y - 12);
+    x1 = Math.max(x1, c.x + CARD_W); y1 = Math.max(y1, c.y + el.offsetHeight);
+  }
+  const pad = 44;
+  const s = clamp(Math.min((r.width - pad*2)/(x1 - x0), (r.height - pad*2)/(y1 - y0), 1), MIN_S, 1);
+  view = { s, x:(r.width - (x1-x0)*s)/2 - x0*s, y:(r.height - (y1-y0)*s)/2 - y0*s };
+  applyView();
+}
+
+/* ── Рисование записей ── */
+function placeCard(el, c){
+  const rot = (selected === c.id || dragging === c.id) ? 0 : c.rot;
+  el.style.transform = `translate(${c.x}px,${c.y}px) rotate(${rot}deg)`;
+}
+function cardNode(c){
+  const t = TYPES[c.type] || TYPES.note;
+  const el = document.createElement('article');
+  el.className = 'card'; el.dataset.id = c.id; el.tabIndex = 0;
+  el.style.setProperty('--k', t.color); el.style.setProperty('--paper', t.paper);
+  el.setAttribute('aria-label', `${t.label}: ${c.title || 'без названия'}`);
+  if (selected === c.id) el.classList.add('selected');
+  if (linkMode && linkMode.from === c.id) el.classList.add('link-source');
+
+  const pin = document.createElement('span'); pin.className = 'pin'; pin.setAttribute('aria-hidden','true');
+  const kind = document.createElement('div'); kind.className = 'kind';
+  const glyph = document.createElement('span'); glyph.className = 'glyph'; glyph.textContent = t.glyph;
+  const kl = document.createElement('span'); kl.textContent = t.label.toLowerCase();
+  kind.append(glyph, kl);
+  const h = document.createElement('h3'); h.textContent = c.title || 'Без названия';
+  el.append(pin, kind, h);
+  if (c.text){ const p = document.createElement('p'); p.textContent = c.text; el.append(p); }
+  if (c.stamp){ const s = document.createElement('span'); s.className = 'stamp'; s.textContent = c.stamp; el.append(s); }
+  if (selected === c.id && !linkMode){
+    const a = document.createElement('div'); a.className = 'actions';
+    a.innerHTML = '<button type="button" data-act="edit">Изменить</button><button type="button" data-act="link">Нить</button><button type="button" class="danger" data-act="del">Убрать</button>';
+    el.append(a);
+  }
+  placeCard(el, c);
+  return el;
+}
+function renderCards(){
+  cardsEl.textContent = '';
+  for (const c of state.cards) cardsEl.append(cardNode(c));
+  drawThreads();
+  $('empty').hidden = state.cards.length > 0;
+}
+
+/* ── Рисование нитей ── */
+function threadGeom(a, b){
+  const ax = a.x + CARD_W/2, ay = a.y, bx = b.x + CARD_W/2, by = b.y;
+  const d = Math.hypot(bx-ax, by-ay), sag = Math.min(70, d*.12) + 6;
+  const mx = (ax+bx)/2, my = (ay+by)/2 + sag;
+  return { d:`M${ax} ${ay} Q${mx} ${my} ${bx} ${by}`, lx:(ax + 2*mx + bx)/4, ly:(ay + 2*my + by)/4 };
+}
+let threadFrame = 0;
+function scheduleThreads(){ if (!threadFrame) threadFrame = requestAnimationFrame(() => { threadFrame = 0; drawThreads(); }); }
+function drawThreads(){
+  let svg = '';
+  tagsEl.textContent = '';
+  for (const l of state.links){
+    const a = byId(l.from), b = byId(l.to); if (!a || !b) continue;
+    const g = threadGeom(a, b);
+    svg += `<path class="shadow" transform="translate(1.5 3)" d="${g.d}"/><path class="yarn" d="${g.d}"/><path class="sheen" d="${g.d}"/><path class="hit" data-link="${l.id}" d="${g.d}"/>`;
+    if (l.label){
+      const tag = document.createElement('div'); tag.className = 'tag'; tag.dataset.link = l.id;
+      tag.style.left = g.lx + 'px'; tag.style.top = g.ly + 'px'; tag.textContent = l.label;
+      tagsEl.append(tag);
+    }
+  }
+  for (const c of state.cards){
+    const x = c.x + CARD_W/2, y = c.y;
+    svg += `<circle class="pinshadow" cx="${x+1.5}" cy="${y+3}" r="8"/><circle class="pinhead" cx="${x}" cy="${y}" r="8"/>`;
+  }
+  threadLayer.innerHTML = svg;
+}
+
+/* ── Действия с записями ── */
+function select(id){ selected = id; renderCards(); }
+function deleteCard(id){
+  state.cards = state.cards.filter(c => c.id !== id);
+  state.links = state.links.filter(l => l.from !== id && l.to !== id);
+  selected = null; renderCards(); save(); setStatus('Запись убрана с доски', true);
+}
+function addLink(from, to){
+  const exists = state.links.some(l => (l.from === from && l.to === to) || (l.from === to && l.to === from));
+  if (exists){ setStatus('Эти записи уже связаны нитью', true); return; }
+  state.links.push({ id:uid(), from, to, label:'' });
+  save(); setStatus('Нить протянута. Нажми на неё, чтобы подписать.', true);
+}
+function startLink(from){
+  linkMode = { from: from || null }; selected = null;
+  $('linkBtn').setAttribute('aria-pressed','true');
+  updateBanner(); renderCards();
+}
+function stopLink(){
+  linkMode = null;
+  $('linkBtn').setAttribute('aria-pressed','false');
+  $('banner').classList.remove('show'); renderCards();
+}
+function updateBanner(){
+  $('bannerText').textContent = linkMode.from ? 'Теперь нажми на вторую запись' : 'Нажми на запись, от которой тянуть нить';
+  $('banner').classList.add('show');
+}
+
+let lastTap = { id:null, t:0 };
+function cardTap(id){
+  if (linkMode){
+    if (!linkMode.from){ linkMode.from = id; updateBanner(); renderCards(); return; }
+    if (linkMode.from === id) return;
+    addLink(linkMode.from, id); stopLink(); return;
+  }
+  const now = Date.now();
+  if (lastTap.id === id && now - lastTap.t < 380){ lastTap = { id:null, t:0 }; openCard(id); return; }
+  lastTap = { id, t:now };
+  select(selected === id ? null : id);
+}
+
+/* ── Жесты: перетаскивание, сдвиг, щипок ── */
+const pointers = new Map();
+let gesture = null;
+board.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (e.target.closest('button, input, textarea, select, label, .hint, .banner, .zoom')) return;
+  pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  try { board.setPointerCapture(e.pointerId); } catch (_) {}
+  if (pointers.size === 2){
+    if (gesture && gesture.kind === 'card') endCardDrag(gesture);
+    const [a, b] = [...pointers.values()];
+    gesture = { kind:'pinch', d0:Math.hypot(a.x-b.x, a.y-b.y) || 1, m0:{ x:(a.x+b.x)/2, y:(a.y+b.y)/2 }, v0:{ ...view } };
+    return;
+  }
+  if (pointers.size > 2) return;
+  const thread = e.target.closest('[data-link]'), cardEl = e.target.closest('.card');
+  if (thread) gesture = { kind:'thread', id:thread.dataset.link, sx:e.clientX, sy:e.clientY, moved:false };
+  else if (cardEl){ const c = byId(cardEl.dataset.id); gesture = { kind:'card', id:c.id, el:cardEl, sx:e.clientX, sy:e.clientY, ox:c.x, oy:c.y, moved:false }; }
+  else gesture = { kind:'pan', sx:e.clientX, sy:e.clientY, ox:view.x, oy:view.y, moved:false };
+});
+board.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  if (!gesture) return;
+  if (gesture.kind === 'pinch'){
+    if (pointers.size < 2) return;
+    const [a, b] = [...pointers.values()], r = board.getBoundingClientRect(), g = gesture;
+    const s = clamp(g.v0.s * Math.hypot(a.x-b.x, a.y-b.y) / g.d0, MIN_S, MAX_S);
+    const m = { x:(a.x+b.x)/2, y:(a.y+b.y)/2 };
+    const wx = (g.m0.x - r.left - g.v0.x) / g.v0.s, wy = (g.m0.y - r.top - g.v0.y) / g.v0.s;
+    view = { s, x:m.x - r.left - wx*s, y:m.y - r.top - wy*s }; userMoved = true; applyView();
+    return;
+  }
+  if (gesture.kind === 'none') return;
+  const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
+  if (!gesture.moved && Math.hypot(dx, dy) > 5){
+    gesture.moved = true;
+    if (gesture.kind === 'card'){ dragging = gesture.id; gesture.el.classList.add('dragging'); }
+    if (gesture.kind === 'pan'){ board.classList.add('panning'); userMoved = true; }
+  }
+  if (!gesture.moved) return;
+  if (gesture.kind === 'card'){
+    const c = byId(gesture.id);
+    c.x = Math.round(gesture.ox + dx/view.s); c.y = Math.round(gesture.oy + dy/view.s);
+    placeCard(gesture.el, c); scheduleThreads();
+  } else if (gesture.kind === 'pan'){
+    view.x = gesture.ox + dx; view.y = gesture.oy + dy; applyView();
+  }
+});
+function endCardDrag(g){
+  if (!g.moved) return;
+  dragging = null; g.el.classList.remove('dragging');
+  const c = byId(g.id); if (c) placeCard(g.el, c);
+  drawThreads(); save();
+}
+function endPointer(e, cancelled){
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (!gesture) return;
+  if (gesture.kind === 'pinch' || gesture.kind === 'none'){ gesture = pointers.size ? { kind:'none' } : null; return; }
+  const g = gesture; gesture = null; board.classList.remove('panning');
+  if (g.kind === 'card'){ if (g.moved) endCardDrag(g); else if (!cancelled) cardTap(g.id); }
+  else if (g.kind === 'thread'){ if (!g.moved && !cancelled) openThread(g.id); }
+  else if (g.kind === 'pan'){ if (!g.moved && !cancelled && !linkMode && selected) select(null); }
+}
+board.addEventListener('pointerup', e => endPointer(e, false));
+board.addEventListener('pointercancel', e => endPointer(e, true));
+board.addEventListener('wheel', e => {
+  e.preventDefault(); userMoved = true;
+  zoomAt(e.clientX, e.clientY, view.s * Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0015)));
+}, { passive:false });
+
+cardsEl.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = b.closest('.card').dataset.id;
+  if (b.dataset.act === 'edit') openCard(id);
+  else if (b.dataset.act === 'link') startLink(id);
+  else if (b.dataset.act === 'del'){
+    if (b.classList.contains('confirm')) deleteCard(id);
+    else { b.classList.add('confirm'); b.textContent = 'Точно убрать?'; setTimeout(() => { if (b.isConnected){ b.classList.remove('confirm'); b.textContent = 'Убрать'; } }, 3000); }
+  }
+});
+cardsEl.addEventListener('keydown', e => {
+  const el = e.target.closest('.card'); if (!el || e.target !== el) return;
+  if (e.key === 'Enter'){ e.preventDefault(); openCard(el.dataset.id); }
+  if (e.key === ' '){ e.preventDefault(); cardTap(el.dataset.id); }
+});
+
+/* ── Окна ── */
+let lastFocus = null;
+function openModal(id, focusEl){
+  lastFocus = document.activeElement;
+  $(id).classList.add('show');
+  setTimeout(() => { (focusEl || $(id).querySelector('input, textarea, button')).focus(); }, 30);
+}
+function closeModals(){
+  document.querySelectorAll('.modal.show').forEach(m => m.classList.remove('show'));
+  if (lastFocus && lastFocus.isConnected) lastFocus.focus();
+}
+document.querySelectorAll('.modal').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m || e.target.closest('[data-close]')) closeModals(); });
+});
+
+function buildTypeChips(){
+  const box = $('typeChips'); box.textContent = '';
+  for (const [key, t] of Object.entries(TYPES)){
+    const input = document.createElement('input'); input.type = 'radio'; input.name = 'ctype'; input.id = 't-' + key; input.value = key;
+    const label = document.createElement('label'); label.htmlFor = input.id; label.style.setProperty('--k', t.color);
+    label.textContent = `${t.glyph} ${t.label}`;
+    box.append(input, label);
+  }
+}
+let lastType = 'clue';
+function openCard(id){
+  const c = id ? byId(id) : null;
+  editingId = c ? c.id : null;
+  $('cardModalTitle').textContent = c ? 'Изменить запись' : 'Новая запись';
+  const type = c ? c.type : lastType;
+  const radio = $('t-' + type) || $('t-note'); if (radio) radio.checked = true;
+  $('fTitle').value = c ? c.title : '';
+  $('fText').value = c ? c.text : '';
+  const sel = $('fStamp'); sel.textContent = '';
+  const stamps = STAMPS.slice(); if (c && c.stamp && !stamps.includes(c.stamp)) stamps.push(c.stamp);
+  for (const s of stamps){ const o = document.createElement('option'); o.value = s; o.textContent = s || 'без печати'; sel.append(o); }
+  sel.value = c ? c.stamp : '';
+  openModal('cardModal', $('fTitle'));
+}
+$('cardForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const checked = document.querySelector('input[name="ctype"]:checked');
+  const data = { type: checked ? checked.value : 'note', title: $('fTitle').value.trim(), text: $('fText').value.trim(), stamp: $('fStamp').value };
+  lastType = data.type;
+  if (editingId){ Object.assign(byId(editingId), data); }
+  else {
+    const r = board.getBoundingClientRect(), id = uid();
+    const x = Math.round((r.width/2 - view.x)/view.s - CARD_W/2 + (Math.random()*60 - 30));
+    const y = Math.round((r.height/2 - view.y)/view.s - 90 + (Math.random()*40 - 20));
+    state.cards.push({ id, ...data, x, y, rot: rotFor(id) });
+    selected = id;
+    setStatus('Запись приколота', true);
+  }
+  closeModals(); renderCards(); save();
+});
+
+function openThread(id){
+  const l = state.links.find(x => x.id === id); if (!l) return;
+  editingLink = id;
+  const a = byId(l.from), b = byId(l.to);
+  $('threadEnds').textContent = `${a ? a.title : '?'} — ${b ? b.title : '?'}`;
+  $('fLabel').value = l.label;
+  openModal('threadModal', $('fLabel'));
+}
+$('threadForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const l = state.links.find(x => x.id === editingLink);
+  if (l) l.label = $('fLabel').value.trim();
+  closeModals(); drawThreads(); save();
+});
+$('cutBtn').addEventListener('click', () => {
+  state.links = state.links.filter(x => x.id !== editingLink);
+  closeModals(); drawThreads(); save(); setStatus('Нить перерезана', true);
+});
+
+/* Свиток: перенос доски текстом */
+function openScroll(){
+  $('exportText').value = JSON.stringify(state, null, 2);
+  $('importText').value = ''; $('importMsg').textContent = '';
+  resetClear();
+  openModal('scrollModal', $('copyBtn'));
+}
+$('copyBtn').addEventListener('click', async () => {
+  const ta = $('exportText'), btn = $('copyBtn');
+  let ok = false;
+  try { await navigator.clipboard.writeText(ta.value); ok = true; } catch (_) {
+    try { ta.focus(); ta.select(); ok = document.execCommand('copy'); } catch (__) {}
+  }
+  btn.textContent = ok ? 'Скопировано' : 'Выдели текст и скопируй вручную';
+  if (!ok){ ta.focus(); ta.select(); }
+  setTimeout(() => { btn.textContent = 'Скопировать свиток'; }, 2500);
+});
+function importFrom(text){
+  try {
+    state = normalize(JSON.parse(text));
+    selected = null; linkMode = null;
+    $('case').textContent = state.title;
+    renderCards(); fit(); save(); closeModals(); setStatus('Доска загружена из свитка', true);
+  } catch (err){
+    $('importMsg').textContent = 'Не получилось прочитать свиток. Проверь, что скопирован весь текст, от первой { до последней }.';
+  }
+}
+$('importBtn').addEventListener('click', () => importFrom($('importText').value));
+$('importFile').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => importFrom(String(reader.result));
+  reader.readAsText(f); e.target.value = '';
+});
+$('demoBtn').addEventListener('click', () => importFrom(JSON.stringify(demoBoard())));
+function resetClear(){ const b = $('clearBtn'); b.classList.remove('confirm'); b.textContent = 'Очистить доску'; }
+$('clearBtn').addEventListener('click', () => {
+  const b = $('clearBtn');
+  if (!b.classList.contains('confirm')){ b.classList.add('confirm'); b.textContent = 'Точно очистить? Нажми ещё раз'; return; }
+  state = { title:'Новое дело', cards:[], links:[] };
+  selected = null; $('case').textContent = state.title;
+  renderCards(); fit(); save(); closeModals(); setStatus('Доска очищена', true);
+});
+
+/* ── Панель и клавиши ── */
+$('addBtn').addEventListener('click', () => { if (linkMode) stopLink(); openCard(null); });
+$('linkBtn').addEventListener('click', () => { if (linkMode) stopLink(); else startLink(selected); });
+$('scrollBtn').addEventListener('click', openScroll);
+$('bannerCancel').addEventListener('click', stopLink);
+$('zoomIn').addEventListener('click', () => zoomCenter(1.25));
+$('zoomOut').addEventListener('click', () => zoomCenter(1/1.25));
+$('zoomFit').addEventListener('click', () => { userMoved = true; fit(); });
+
+const caseEl = $('case');
+caseEl.addEventListener('input', () => { state.title = caseEl.textContent.trim().slice(0,100) || 'Новое дело'; save(); });
+caseEl.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); caseEl.blur(); } });
+caseEl.addEventListener('paste', e => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\s+/g,' ');
+  document.execCommand('insertText', false, text);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.querySelector('.modal.show')) closeModals();
+  else if (linkMode) stopLink();
+  else if (selected) select(null);
+});
+
+let hintSeen = false;
+try { hintSeen = localStorage.getItem(HINT_KEY) === '1'; } catch (_) {}
+$('hint').hidden = hintSeen;
+$('hintOk').addEventListener('click', () => { $('hint').hidden = true; try { localStorage.setItem(HINT_KEY, '1'); } catch (_) {} });
+
+/* ── Запуск ── */
+buildTypeChips();
+corkTexture();
+caseEl.textContent = state.title;
+renderCards();
+fit();
+setStatus('Сохранено в этом браузере');
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { renderCards(); if (!userMoved) fit(); });
+window.addEventListener('resize', () => { if (!userMoved) fit(); });
+})();
+</script>
+</body>
+</html>
