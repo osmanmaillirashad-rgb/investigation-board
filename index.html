@@ -177,7 +177,14 @@ body{
 .board-meta{font-size:13px;font-style:italic;opacity:.75}
 .board-del{flex:none;min-width:40px;padding:0 8px;cursor:pointer;font-family:var(--font-ui);font-size:14px;color:#e8b7a8;background:transparent;border:1px solid #4a3218;border-radius:6px}
 .board-del.confirm{color:#fff2e8;background:#8a1a12;border-color:#d0574a}
-.board-open:focus-visible,.board-del:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
+.board-open:focus-visible,.board-del:focus-visible,.board-pin:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
+.board-caption{margin:4px 2px 0;font-family:var(--font-ui);font-size:13px;letter-spacing:.12em;color:var(--brass)}
+/* Булавка закрепления: бледная — обычная доска, латунная — закреплённая */
+.board-pin{flex:none;min-width:40px;display:grid;place-items:center;cursor:pointer;background:transparent;border:1px solid #4a3218;border-radius:6px}
+.board-pin:hover{border-color:var(--brass)}
+.pin-dot{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fbe7b0 0,#c39243 42%,#5c3b12 100%);box-shadow:0 2px 2px rgba(0,0,0,.5);opacity:.3;filter:grayscale(1)}
+.board-pin:hover .pin-dot{opacity:.65}
+.board-pin[aria-pressed="true"] .pin-dot{opacity:1;filter:none}
 /* Красный язычок-закладка слева: открывает и закрывает список досок */
 .side-tab{
   position:absolute;left:-10px;top:26px;z-index:11;padding:16px 8px 16px 18px;cursor:pointer;
@@ -498,9 +505,10 @@ function loadSaved(){
   return null;
 }
 
-/* Библиотека досок: { current: id открытой доски, boards: [{ id, shared, title, cards, links }] }.
-   shared: true — это копия общей доски из board.json (такая доска может быть только одна). */
-const newBoardEntry = () => ({ id: uid(), shared: false, title: 'Новое дело', cards: [], links: [] });
+/* Библиотека досок: { current: id открытой доски, boards: [{ id, shared, pinned, title, cards, links }] }.
+   shared: true — это копия общей доски из board.json (такая доска может быть только одна).
+   pinned: true — доска закреплена наверху списка. */
+const newBoardEntry = () => ({ id: uid(), shared: false, pinned: false, title: 'Новое дело', cards: [], links: [] });
 function normalizeLib(data){
   const boards = [], ids = new Set();
   let hasShared = false;
@@ -510,7 +518,7 @@ function normalizeLib(data){
     while (ids.has(id)) id = uid();
     ids.add(id);
     const shared = raw.shared === true && !hasShared; if (shared) hasShared = true;
-    boards.push({ id, shared, title: b.title, cards: b.cards, links: b.links });
+    boards.push({ id, shared, pinned: raw.pinned === true, title: b.title, cards: b.cards, links: b.links }); // в старых библиотеках pinned нет — значит, не закреплена
   }
   if (!boards.length) throw new Error('В библиотеке нет досок.');
   return { current: boards.some(b => b.id === data.current) ? data.current : boards[0].id, boards };
@@ -518,14 +526,14 @@ function normalizeLib(data){
 function loadLibrary(){
   try { const raw = localStorage.getItem(LIB_KEY); if (raw) return normalizeLib(JSON.parse(raw)); } catch (_) {}
   const old = loadSaved(); // переход со старого формата: одна доска становится первой доской библиотеки
-  if (old) return { current:'b1', boards:[{ id:'b1', shared:false, title: old.title, cards: old.cards, links: old.links }] };
+  if (old) return { current:'b1', boards:[{ id:'b1', shared:false, pinned:false, title: old.title, cards: old.cards, links: old.links }] };
   return null;
 }
 
 /* ── Состояние ──
    lib — все доски этого браузера, state — открытая сейчас доска из lib. */
 const savedLib = loadLibrary();
-let lib = savedLib || { current:'b1', boards:[{ id:'b1', shared:false, title:'', cards:[], links:[] }] };
+let lib = savedLib || { current:'b1', boards:[{ id:'b1', shared:false, pinned:false, title:'', cards:[], links:[] }] };
 let state = lib.boards.find(b => b.id === lib.current);
 let waitingShared = !savedLib; // в браузере ещё нет ни одной доски — при запуске загрузим общую из board.json
 function putBoard(data){ state.title = data.title; state.cards = data.cards; state.links = data.links; } // заменить содержимое открытой доски
@@ -1023,21 +1031,35 @@ caseEl.addEventListener('paste', e => {
 /* ── Боковая панель: список досок ── */
 const narrow = () => window.innerWidth < 700; // на узком экране панель закрывает почти всю доску
 function renderSidebar(){
-  const list = $('boardList'); list.textContent = '';
-  for (const b of lib.boards){
-    const li = document.createElement('li');
-    li.className = 'board-item' + (b.id === lib.current ? ' current' : ''); li.dataset.id = b.id;
-    const open = document.createElement('button'); open.type = 'button'; open.className = 'board-open'; open.dataset.act = 'open';
-    if (b.id === lib.current) open.setAttribute('aria-current', 'true');
-    const name = document.createElement('span'); name.className = 'board-name'; name.textContent = b.title || 'Новое дело';
-    const meta = document.createElement('span'); meta.className = 'board-meta';
-    meta.textContent = (b.shared ? 'общая · ' : '') + b.cards.length + ' ' + plural(b.cards.length, 'запись', 'записи', 'записей');
-    open.append(name, meta);
-    const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del';
-    del.textContent = '✕'; del.setAttribute('aria-label', `Удалить доску «${b.title || 'Новое дело'}»`);
-    li.append(open, del);
-    list.append(li);
-  }
+  const list = $('boardList');
+  // запоминаем, на какой кнопке стоял фокус клавиатуры, чтобы вернуть его после перерисовки
+  const f = document.activeElement;
+  const keep = f && list.contains(f) && f.dataset.act ? [f.closest('.board-item').dataset.id, f.dataset.act] : null;
+  list.textContent = '';
+  const caption = text => { const li = document.createElement('li'); li.className = 'board-caption'; li.textContent = text; list.append(li); };
+  const pinned = lib.boards.filter(b => b.pinned), rest = lib.boards.filter(b => !b.pinned);
+  if (pinned.length){ caption('Закреплённые'); pinned.forEach(addBoardItem); if (rest.length) caption('Остальные'); }
+  rest.forEach(addBoardItem);
+  if (keep){ const el = list.querySelector(`.board-item[data-id="${keep[0]}"] [data-act="${keep[1]}"]`); if (el) el.focus(); }
+}
+function addBoardItem(b){ // одна строчка списка: [название и число записей] [булавка] [✕]
+  const li = document.createElement('li');
+  li.className = 'board-item' + (b.id === lib.current ? ' current' : ''); li.dataset.id = b.id;
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'board-open'; open.dataset.act = 'open';
+  if (b.id === lib.current) open.setAttribute('aria-current', 'true');
+  const name = document.createElement('span'); name.className = 'board-name'; name.textContent = b.title || 'Новое дело';
+  const meta = document.createElement('span'); meta.className = 'board-meta';
+  meta.textContent = (b.shared ? 'общая · ' : '') + b.cards.length + ' ' + plural(b.cards.length, 'запись', 'записи', 'записей');
+  open.append(name, meta);
+  const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'board-pin'; pin.dataset.act = 'pin';
+  pin.setAttribute('aria-pressed', b.pinned ? 'true' : 'false');
+  pin.title = b.pinned ? 'Открепить' : 'Закрепить наверху';
+  pin.setAttribute('aria-label', `${b.pinned ? 'Открепить' : 'Закрепить'} доску «${b.title || 'Новое дело'}»`);
+  pin.innerHTML = '<span class="pin-dot"></span>';
+  const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del';
+  del.textContent = '✕'; del.setAttribute('aria-label', `Удалить доску «${b.title || 'Новое дело'}»`);
+  li.append(open, pin, del);
+  $('boardList').append(li);
 }
 function openBoard(id){
   const b = lib.boards.find(x => x.id === id); if (!b) return;
@@ -1071,6 +1093,10 @@ $('boardList').addEventListener('click', e => {
   if (btn.dataset.act === 'open'){
     if (id !== lib.current){ openBoard(id); save(); }
     if (narrow()) closeSidebar();
+  } else if (btn.dataset.act === 'pin'){
+    const b = lib.boards.find(x => x.id === id);
+    b.pinned = !b.pinned;
+    renderSidebar(); save(); setStatus(b.pinned ? 'Доска закреплена наверху' : 'Доска откреплена', true);
   } else if (btn.classList.contains('confirm')) deleteBoard(id);
   else {
     btn.classList.add('confirm'); btn.textContent = 'Удалить?';
