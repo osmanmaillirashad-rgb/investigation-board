@@ -334,6 +334,7 @@ body{
     <p id="importMsg" class="note" aria-live="polite"></p>
     <hr>
     <div class="row left">
+      <button id="sharedBtn" type="button" class="btn">Загрузить общую доску</button>
       <button id="demoBtn" type="button" class="btn ghost">Вернуть пример</button>
       <button id="clearBtn" type="button" class="btn danger">Очистить доску</button>
     </div>
@@ -362,6 +363,7 @@ const TYPES = {
 };
 const STAMPS = ['', 'Подозреваемый', 'Важно', 'Пропал', 'Мёртв', 'Раскрыто', 'Ложный след'];
 const STORE_KEY = 'dnd-investigation-board-v1';
+const SHARED_URL = 'board.json'; // общая доска для всей партии, лежит рядом с index.html
 const HINT_KEY = 'dnd-investigation-board-hint-seen';
 const CARD_W = 200, TILE = 240, MIN_S = 0.2, MAX_S = 2.5;
 const IMG_W = 300, IMG_H = 400; // картинки записей уменьшаются до этого размера, чтобы влезать в сохранение браузера
@@ -441,7 +443,9 @@ function loadSaved(){
 }
 
 /* ── Состояние ── */
-let state = loadSaved() || normalize(demoBoard());
+const savedBoard = loadSaved();
+let state = savedBoard || { title:'', cards:[], links:[] };
+let waitingShared = !savedBoard; // своей доски в браузере нет — при запуске загрузим общую из board.json
 let view = { x:0, y:0, s:1 };
 let selected = null;       // id выбранной записи
 let linkMode = null;       // { from: id | null } — режим «тянем нить»
@@ -554,7 +558,7 @@ function renderCards(){
   cardsEl.textContent = '';
   for (const c of state.cards) cardsEl.append(cardNode(c));
   drawThreads();
-  $('empty').hidden = state.cards.length > 0;
+  $('empty').hidden = state.cards.length > 0 || waitingShared;
 }
 
 /* ── Рисование нитей ── */
@@ -845,7 +849,7 @@ $('cutBtn').addEventListener('click', () => {
 function openScroll(){
   $('exportText').value = JSON.stringify(state, null, 2);
   $('importText').value = ''; $('importMsg').textContent = '';
-  resetClear();
+  resetClear(); resetShared();
   openModal('scrollModal', $('copyBtn'));
 }
 $('copyBtn').addEventListener('click', async () => {
@@ -885,6 +889,30 @@ $('clearBtn').addEventListener('click', () => {
   renderCards(); fit(); save(); closeModals(); setStatus('Доска очищена', true);
 });
 
+/* Общая доска: файл board.json рядом с index.html. Мастер обновляет его на GitHub. */
+function fetchShared(){
+  return fetch(SHARED_URL, { cache:'no-cache' }) // no-cache: всегда спрашиваем у сайта свежую версию
+    .then(r => { if (!r.ok) throw new Error('Файл не найден'); return r.json(); })
+    .then(normalize);
+}
+function showBoard(data){
+  if (linkMode) stopLink();
+  state = data; selected = null;
+  $('case').textContent = state.title;
+  renderCards(); fit();
+}
+function resetShared(){ const b = $('sharedBtn'); b.classList.remove('danger','confirm'); b.textContent = 'Загрузить общую доску'; }
+$('sharedBtn').addEventListener('click', () => {
+  const b = $('sharedBtn');
+  if (!b.classList.contains('confirm')){ b.classList.add('danger','confirm'); b.textContent = 'Заменить твою доску? Нажми ещё раз'; return; }
+  resetShared(); b.disabled = true;
+  $('importMsg').textContent = 'Загружаю общую доску…';
+  fetchShared()
+    .then(data => { showBoard(data); save(); closeModals(); setStatus('Загружена общая доска', true); })
+    .catch(() => { $('importMsg').textContent = 'Не получилось загрузить общую доску. Проверь, что файл board.json лежит рядом с index.html и в нём нет ошибок.'; })
+    .then(() => { b.disabled = false; });
+});
+
 /* ── Панель и клавиши ── */
 $('addBtn').addEventListener('click', () => { if (linkMode) stopLink(); openCard(null); });
 $('linkBtn').addEventListener('click', () => { if (linkMode) stopLink(); else startLink(selected); });
@@ -922,6 +950,20 @@ caseEl.textContent = state.title;
 renderCards();
 fit();
 setStatus('Сохранено в этом браузере');
+if (waitingShared){
+  setStatus('Загружаю общую доску…');
+  fetchShared()
+    .then(data => ({ data, ok:true }), () => ({ data:normalize(demoBoard()), ok:false })) // не вышло — показываем пример, как раньше
+    .then(res => {
+      waitingShared = false;
+      if (state.title || state.cards.length || state.links.length){ // пока грузилось, ты уже начал свою доску — не трогаем её
+        if (!state.title){ state.title = 'Новое дело'; caseEl.textContent = state.title; save(); }
+        renderCards(); return;
+      }
+      showBoard(res.data);
+      setStatus(res.ok ? 'Открыта общая доска' : 'Общая доска (board.json) не загрузилась, открыт пример', res.ok);
+    });
+}
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { renderCards(); if (!userMoved) fit(); });
 window.addEventListener('resize', () => { if (!userMoved) fit(); });
 })();
