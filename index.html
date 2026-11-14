@@ -179,12 +179,12 @@ body{
 .board-del.confirm{color:#fff2e8;background:#8a1a12;border-color:#d0574a}
 .board-open:focus-visible,.board-del:focus-visible,.board-pin:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
 .board-caption{margin:4px 2px 0;font-family:var(--font-ui);font-size:13px;letter-spacing:.12em;color:var(--brass)}
-/* Булавка закрепления: бледная — обычная доска, латунная — закреплённая */
+/* Кнопка закрепления 📌: серая и бледная — обычная доска, цветная — закреплённая */
 .board-pin{flex:none;min-width:40px;display:grid;place-items:center;cursor:pointer;background:transparent;border:1px solid #4a3218;border-radius:6px}
 .board-pin:hover{border-color:var(--brass)}
-.pin-dot{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fbe7b0 0,#c39243 42%,#5c3b12 100%);box-shadow:0 2px 2px rgba(0,0,0,.5);opacity:.3;filter:grayscale(1)}
-.board-pin:hover .pin-dot{opacity:.65}
-.board-pin[aria-pressed="true"] .pin-dot{opacity:1;filter:none}
+.pin-icon{font-size:17px;line-height:1;opacity:.35;filter:grayscale(1)}
+.board-pin:hover .pin-icon{opacity:.7}
+.board-pin[aria-pressed="true"] .pin-icon{opacity:1;filter:none}
 /* Красный язычок-закладка слева: открывает и закрывает список досок */
 .side-tab{
   position:absolute;left:-10px;top:26px;z-index:11;padding:16px 8px 16px 18px;cursor:pointer;
@@ -1055,7 +1055,7 @@ function addBoardItem(b){ // одна строчка списка: [назван
   pin.setAttribute('aria-pressed', b.pinned ? 'true' : 'false');
   pin.title = b.pinned ? 'Открепить' : 'Закрепить наверху';
   pin.setAttribute('aria-label', `${b.pinned ? 'Открепить' : 'Закрепить'} доску «${b.title || 'Новое дело'}»`);
-  pin.innerHTML = '<span class="pin-dot"></span>';
+  pin.innerHTML = '<span class="pin-icon" aria-hidden="true">📌</span>';
   const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del';
   del.textContent = '✕'; del.setAttribute('aria-label', `Удалить доску «${b.title || 'Новое дело'}»`);
   li.append(open, pin, del);
