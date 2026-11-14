@@ -154,6 +154,31 @@ body{
 }
 .empty[hidden]{display:none}
 
+/* ── Список досок (боковая панель) ──────────────── */
+.stage{position:relative;flex:1;display:flex;min-height:0}
+.sidebar{
+  position:absolute;left:0;top:0;bottom:0;z-index:12;width:min(300px,86vw);display:flex;flex-direction:column;gap:10px;
+  padding:14px 12px 16px;overflow:auto;background:linear-gradient(90deg,#2a1b10,#22160d);
+  border-right:2px solid #5a3d1e;box-shadow:6px 0 24px rgba(0,0,0,.5);
+}
+.sidebar[hidden]{display:none}
+.side-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.side-head b{font-family:var(--font-display);font-weight:400;font-size:21px;color:#f4e7c8}
+.side-head .btn{width:40px;padding:0}
+.board-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.board-item{display:flex;gap:4px}
+.board-open{
+  flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 10px;cursor:pointer;text-align:left;
+  font:inherit;color:#efdfbd;background:rgba(255,240,210,.04);border:1px solid #4a3218;border-radius:6px;
+}
+.board-open:hover{border-color:var(--brass)}
+.board-item.current .board-open{color:var(--ink);background:var(--parchment);border-color:var(--brass)}
+.board-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-size:17px;line-height:1.25}
+.board-meta{font-size:13px;font-style:italic;opacity:.75}
+.board-del{flex:none;min-width:40px;padding:0 8px;cursor:pointer;font-family:var(--font-ui);font-size:14px;color:#e8b7a8;background:transparent;border:1px solid #4a3218;border-radius:6px}
+.board-del.confirm{color:#fff2e8;background:#8a1a12;border-color:#d0574a}
+.board-open:focus-visible,.board-del:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
+
 /* ── Окна ───────────────────────────────────────── */
 .modal{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(10,6,3,.62)}
 .modal.show{display:flex}
@@ -215,12 +240,23 @@ body{
     <div id="case" class="case" contenteditable="true" spellcheck="false" role="textbox" aria-label="Название дела"></div>
   </div>
   <div class="tools">
+    <button id="boardsBtn" class="btn" type="button" aria-expanded="false" aria-controls="sidebar">☰ Доски</button>
     <button id="addBtn" class="btn primary" type="button">+ Запись</button>
     <button id="linkBtn" class="btn" type="button" aria-pressed="false">Нить</button>
     <button id="scrollBtn" class="btn" type="button">Свиток</button>
   </div>
   <div id="status" class="status" aria-live="polite"></div>
 </header>
+
+<div class="stage">
+<aside id="sidebar" class="sidebar" aria-label="Список досок" hidden>
+  <div class="side-head">
+    <b>Доски</b>
+    <button id="sideClose" class="btn ghost" type="button" aria-label="Закрыть список досок">✕</button>
+  </div>
+  <button id="newBoardBtn" class="btn primary" type="button">+ Новая доска</button>
+  <ul id="boardList" class="board-list"></ul>
+</aside>
 
 <main id="board" class="board" aria-label="Доска">
   <div id="world" class="world">
@@ -254,6 +290,7 @@ body{
     <button id="zoomFit" class="btn" type="button" aria-label="Показать всю доску" title="Показать всю доску">⤢</button>
   </div>
 </main>
+</div>
 
 <!-- Окно: запись -->
 <div id="cardModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
@@ -362,7 +399,8 @@ const TYPES = {
   note:     { label:'Заметка',  glyph:'✎', color:'#5a4a38', paper:'#eadfc4' }
 };
 const STAMPS = ['', 'Подозреваемый', 'Важно', 'Пропал', 'Мёртв', 'Раскрыто', 'Ложный след'];
-const STORE_KEY = 'dnd-investigation-board-v1';
+const STORE_KEY = 'dnd-investigation-board-v1';   // старый формат: одна доска (переносится в библиотеку)
+const LIB_KEY = 'dnd-investigation-boards-v2';     // новый формат: библиотека из многих досок
 const SHARED_URL = 'board.json'; // общая доска для всей партии, лежит рядом с index.html
 const HINT_KEY = 'dnd-investigation-board-hint-seen';
 const CARD_W = 200, TILE = 240, MIN_S = 0.2, MAX_S = 2.5;
@@ -403,6 +441,7 @@ const uid = () => 'x' + Date.now().toString(36) + Math.random().toString(36).sli
 const cleanId = v => String(v == null ? '' : v).replace(/[^\w-]/g,'').slice(0,40);
 const num = (v,d) => (typeof v === 'number' && isFinite(v)) ? v : d;
 const cleanImg = v => (typeof v === 'string' && v.length < 400000 && /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
+function plural(n, one, few, many){ const a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many; }
 function rotFor(id){ let h = 0; for (const ch of String(id)) h = (h*31 + ch.charCodeAt(0)) | 0; return ((Math.abs(h) % 50) - 25) / 10; }
 
 /* Проверяет и чинит данные доски (из браузера или из свитка). */
@@ -442,10 +481,37 @@ function loadSaved(){
   return null;
 }
 
-/* ── Состояние ── */
-const savedBoard = loadSaved();
-let state = savedBoard || { title:'', cards:[], links:[] };
-let waitingShared = !savedBoard; // своей доски в браузере нет — при запуске загрузим общую из board.json
+/* Библиотека досок: { current: id открытой доски, boards: [{ id, shared, title, cards, links }] }.
+   shared: true — это копия общей доски из board.json (такая доска может быть только одна). */
+const newBoardEntry = () => ({ id: uid(), shared: false, title: 'Новое дело', cards: [], links: [] });
+function normalizeLib(data){
+  const boards = [], ids = new Set();
+  let hasShared = false;
+  for (const raw of (data && Array.isArray(data.boards) ? data.boards : [])){
+    let b; try { b = normalize(raw); } catch (_) { continue; }
+    let id = cleanId(raw.id) || uid();
+    while (ids.has(id)) id = uid();
+    ids.add(id);
+    const shared = raw.shared === true && !hasShared; if (shared) hasShared = true;
+    boards.push({ id, shared, title: b.title, cards: b.cards, links: b.links });
+  }
+  if (!boards.length) throw new Error('В библиотеке нет досок.');
+  return { current: boards.some(b => b.id === data.current) ? data.current : boards[0].id, boards };
+}
+function loadLibrary(){
+  try { const raw = localStorage.getItem(LIB_KEY); if (raw) return normalizeLib(JSON.parse(raw)); } catch (_) {}
+  const old = loadSaved(); // переход со старого формата: одна доска становится первой доской библиотеки
+  if (old) return { current:'b1', boards:[{ id:'b1', shared:false, title: old.title, cards: old.cards, links: old.links }] };
+  return null;
+}
+
+/* ── Состояние ──
+   lib — все доски этого браузера, state — открытая сейчас доска из lib. */
+const savedLib = loadLibrary();
+let lib = savedLib || { current:'b1', boards:[{ id:'b1', shared:false, title:'', cards:[], links:[] }] };
+let state = lib.boards.find(b => b.id === lib.current);
+let waitingShared = !savedLib; // в браузере ещё нет ни одной доски — при запуске загрузим общую из board.json
+function putBoard(data){ state.title = data.title; state.cards = data.cards; state.links = data.links; } // заменить содержимое открытой доски
 let view = { x:0, y:0, s:1 };
 let selected = null;       // id выбранной записи
 let linkMode = null;       // { from: id | null } — режим «тянем нить»
@@ -467,7 +533,12 @@ function setStatus(text, transient){
 function save(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); if (!statusTimer || !$('status').textContent) setStatus('Сохранено в этом браузере'); }
+    renderSidebar(); // список досок обновляется после каждого изменения
+    try {
+      localStorage.setItem(LIB_KEY, JSON.stringify(lib));
+      localStorage.removeItem(STORE_KEY); // старая одиночная доска уже переехала в библиотеку — место не занимаем дважды
+      if (!statusTimer || !$('status').textContent) setStatus('Сохранено в этом браузере');
+    }
     catch (_) { setStatus('Браузер не даёт сохранить. Перенеси доску через «Свиток».'); }
   }, 250);
 }
@@ -847,7 +918,7 @@ $('cutBtn').addEventListener('click', () => {
 
 /* Свиток: перенос доски текстом */
 function openScroll(){
-  $('exportText').value = JSON.stringify(state, null, 2);
+  $('exportText').value = JSON.stringify({ title: state.title, cards: state.cards, links: state.links }, null, 2);
   $('importText').value = ''; $('importMsg').textContent = '';
   resetClear(); resetShared();
   openModal('scrollModal', $('copyBtn'));
@@ -864,7 +935,7 @@ $('copyBtn').addEventListener('click', async () => {
 });
 function importFrom(text){
   try {
-    state = normalize(JSON.parse(text));
+    putBoard(normalize(JSON.parse(text)));
     selected = null; linkMode = null;
     $('case').textContent = state.title;
     renderCards(); fit(); save(); closeModals(); setStatus('Доска загружена из свитка', true);
@@ -884,7 +955,7 @@ function resetClear(){ const b = $('clearBtn'); b.classList.remove('confirm'); b
 $('clearBtn').addEventListener('click', () => {
   const b = $('clearBtn');
   if (!b.classList.contains('confirm')){ b.classList.add('confirm'); b.textContent = 'Точно очистить? Нажми ещё раз'; return; }
-  state = { title:'Новое дело', cards:[], links:[] };
+  putBoard({ title:'Новое дело', cards:[], links:[] });
   selected = null; $('case').textContent = state.title;
   renderCards(); fit(); save(); closeModals(); setStatus('Доска очищена', true);
 });
@@ -895,20 +966,21 @@ function fetchShared(){
     .then(r => { if (!r.ok) throw new Error('Файл не найден'); return r.json(); })
     .then(normalize);
 }
-function showBoard(data){
-  if (linkMode) stopLink();
-  state = data; selected = null;
-  $('case').textContent = state.title;
-  renderCards(); fit();
-}
 function resetShared(){ const b = $('sharedBtn'); b.classList.remove('danger','confirm'); b.textContent = 'Загрузить общую доску'; }
 $('sharedBtn').addEventListener('click', () => {
   const b = $('sharedBtn');
-  if (!b.classList.contains('confirm')){ b.classList.add('danger','confirm'); b.textContent = 'Заменить твою доску? Нажми ещё раз'; return; }
+  if (lib.boards.some(x => x.shared) && !b.classList.contains('confirm')){ // копия общей доски уже есть — переспрашиваем, ведь она заменится свежей
+    b.classList.add('danger','confirm'); b.textContent = 'Обновить общую доску? Нажми ещё раз'; return;
+  }
   resetShared(); b.disabled = true;
   $('importMsg').textContent = 'Загружаю общую доску…';
   fetchShared()
-    .then(data => { showBoard(data); save(); closeModals(); setStatus('Загружена общая доска', true); })
+    .then(data => {
+      let entry = lib.boards.find(x => x.shared);
+      if (!entry){ entry = { id: uid(), shared: true }; lib.boards.unshift(entry); } // первый раз — добавляем в список отдельной доской
+      Object.assign(entry, { title: data.title, cards: data.cards, links: data.links });
+      openBoard(entry.id); save(); closeModals(); setStatus('Загружена общая доска', true);
+    })
     .catch(() => { $('importMsg').textContent = 'Не получилось загрузить общую доску. Проверь, что файл board.json лежит рядом с index.html и в нём нет ошибок.'; })
     .then(() => { b.disabled = false; });
 });
@@ -931,10 +1003,69 @@ caseEl.addEventListener('paste', e => {
   document.execCommand('insertText', false, text);
 });
 
+/* ── Боковая панель: список досок ── */
+const narrow = () => window.innerWidth < 700; // на узком экране панель закрывает почти всю доску
+function renderSidebar(){
+  const list = $('boardList'); list.textContent = '';
+  for (const b of lib.boards){
+    const li = document.createElement('li');
+    li.className = 'board-item' + (b.id === lib.current ? ' current' : ''); li.dataset.id = b.id;
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'board-open'; open.dataset.act = 'open';
+    if (b.id === lib.current) open.setAttribute('aria-current', 'true');
+    const name = document.createElement('span'); name.className = 'board-name'; name.textContent = b.title || 'Новое дело';
+    const meta = document.createElement('span'); meta.className = 'board-meta';
+    meta.textContent = (b.shared ? 'общая · ' : '') + b.cards.length + ' ' + plural(b.cards.length, 'запись', 'записи', 'записей');
+    open.append(name, meta);
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del';
+    del.textContent = '✕'; del.setAttribute('aria-label', `Удалить доску «${b.title || 'Новое дело'}»`);
+    li.append(open, del);
+    list.append(li);
+  }
+}
+function openBoard(id){
+  const b = lib.boards.find(x => x.id === id); if (!b) return;
+  if (linkMode) stopLink();
+  lib.current = b.id; state = b; selected = null;
+  caseEl.textContent = state.title;
+  renderCards(); fit(); renderSidebar();
+}
+function deleteBoard(id){
+  const i = lib.boards.findIndex(x => x.id === id); if (i < 0) return;
+  lib.boards.splice(i, 1);
+  if (!lib.boards.length) lib.boards.push(newBoardEntry()); // совсем без досок не остаёмся
+  if (lib.current === id) openBoard(lib.boards[Math.min(i, lib.boards.length - 1)].id);
+  save(); setStatus('Доска удалена', true);
+}
+function openSidebar(){ renderSidebar(); $('sidebar').hidden = false; $('boardsBtn').setAttribute('aria-expanded', 'true'); }
+function closeSidebar(){ $('sidebar').hidden = true; $('boardsBtn').setAttribute('aria-expanded', 'false'); }
+$('boardsBtn').addEventListener('click', () => { if ($('sidebar').hidden) openSidebar(); else closeSidebar(); });
+$('sideClose').addEventListener('click', closeSidebar);
+$('newBoardBtn').addEventListener('click', () => {
+  const b = newBoardEntry();
+  lib.boards.unshift(b); openBoard(b.id); save();
+  if (narrow()) closeSidebar();
+  caseEl.focus(); // выделяем название, чтобы сразу напечатать своё
+  const r = document.createRange(); r.selectNodeContents(caseEl);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+});
+$('boardList').addEventListener('click', e => {
+  const btn = e.target.closest('[data-act]'); if (!btn) return;
+  const id = btn.closest('.board-item').dataset.id;
+  if (btn.dataset.act === 'open'){
+    if (id !== lib.current){ openBoard(id); save(); }
+    if (narrow()) closeSidebar();
+  } else if (btn.classList.contains('confirm')) deleteBoard(id);
+  else {
+    btn.classList.add('confirm'); btn.textContent = 'Удалить?';
+    setTimeout(() => { if (btn.isConnected){ btn.classList.remove('confirm'); btn.textContent = '✕'; } }, 3000);
+  }
+});
+
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (document.querySelector('.modal.show')) closeModals();
   else if (linkMode) stopLink();
+  else if (!$('sidebar').hidden) closeSidebar();
   else if (selected) select(null);
 });
 
@@ -951,16 +1082,19 @@ renderCards();
 fit();
 setStatus('Сохранено в этом браузере');
 if (waitingShared){
+  const blank = state; // пустая доска, в которую положим общую
   setStatus('Загружаю общую доску…');
   fetchShared()
     .then(data => ({ data, ok:true }), () => ({ data:normalize(demoBoard()), ok:false })) // не вышло — показываем пример, как раньше
     .then(res => {
       waitingShared = false;
-      if (state.title || state.cards.length || state.links.length){ // пока грузилось, ты уже начал свою доску — не трогаем её
-        if (!state.title){ state.title = 'Новое дело'; caseEl.textContent = state.title; save(); }
+      const untouched = lib.boards.length === 1 && lib.boards[0] === blank && !blank.title && !blank.cards.length && !blank.links.length;
+      if (!untouched){ // пока грузилось, ты уже начал свою доску — не трогаем её
+        if (!blank.title){ blank.title = 'Новое дело'; if (state === blank) caseEl.textContent = blank.title; save(); }
         renderCards(); return;
       }
-      showBoard(res.data);
+      putBoard(res.data); blank.shared = res.ok;
+      openBoard(blank.id);
       setStatus(res.ok ? 'Открыта общая доска' : 'Общая доска (board.json) не загрузилась, открыт пример', res.ok);
     });
 }
