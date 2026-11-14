@@ -117,6 +117,7 @@ body{
 .glyph{display:inline-grid;place-items:center;width:23px;height:23px;border-radius:50%;background:var(--k);color:#f7ecd2;font-family:var(--font-display);font-size:14px;line-height:1}
 .card h3{margin:0 0 5px;font-family:var(--font-display);font-weight:400;font-size:19px;line-height:1.15;text-wrap:balance}
 .card p{margin:0;font-size:15px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}
+.portrait{display:block;width:100%;height:auto;margin:0 0 9px;border-radius:2px;box-shadow:0 0 0 1px rgba(60,36,16,.35),0 2px 4px rgba(40,20,6,.25);pointer-events:none}
 .stamp{
   display:inline-block;margin-top:10px;padding:1px 8px;border:2px solid rgba(150,24,18,.8);border-radius:3px;
   font-family:var(--font-ui);font-weight:700;font-size:13px;letter-spacing:.1em;color:rgba(150,24,18,.9);transform:rotate(-5deg);
@@ -190,6 +191,9 @@ body{
 .sheet .btn.danger.confirm{color:#fff2e8;background:#8a1a12}
 .file{font-size:15px}
 .note{font-size:14px;font-style:italic;color:#6b4e2e}
+.imgprev{display:block;max-width:150px;max-height:200px;border-radius:3px;box-shadow:0 0 0 1px rgba(60,36,16,.35)}
+.imgfield [hidden]{display:none}
+.imgfield .note{margin:0}
 
 @media (max-width:560px){
   .bar{padding:8px 12px}
@@ -266,6 +270,16 @@ body{
     <div class="field">
       <label class="lbl" for="fText">Что известно</label>
       <textarea id="fText" maxlength="2000" placeholder="Что видели, что сказали, что не сходится…"></textarea>
+    </div>
+    <div class="field imgfield">
+      <span class="lbl">Картинка</span>
+      <img id="fImgPreview" class="imgprev" alt="Выбранная картинка" hidden>
+      <div class="row left">
+        <button id="fImgPick" type="button" class="btn ghost">Выбрать картинку…</button>
+        <button id="fImgClear" type="button" class="btn ghost" hidden>Убрать картинку</button>
+      </div>
+      <input id="fImg" type="file" accept="image/*" hidden>
+      <p id="fImgMsg" class="note" aria-live="polite"></p>
     </div>
     <div class="field">
       <label class="lbl" for="fStamp">Печать</label>
@@ -350,6 +364,7 @@ const STAMPS = ['', 'Подозреваемый', 'Важно', 'Пропал', 
 const STORE_KEY = 'dnd-investigation-board-v1';
 const HINT_KEY = 'dnd-investigation-board-hint-seen';
 const CARD_W = 200, TILE = 240, MIN_S = 0.2, MAX_S = 2.5;
+const IMG_W = 300, IMG_H = 400; // картинки записей уменьшаются до этого размера, чтобы влезать в сохранение браузера
 
 /* ── Пример дела ── */
 function demoBoard(){
@@ -385,6 +400,7 @@ const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
 const uid = () => 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const cleanId = v => String(v == null ? '' : v).replace(/[^\w-]/g,'').slice(0,40);
 const num = (v,d) => (typeof v === 'number' && isFinite(v)) ? v : d;
+const cleanImg = v => (typeof v === 'string' && v.length < 400000 && /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
 function rotFor(id){ let h = 0; for (const ch of String(id)) h = (h*31 + ch.charCodeAt(0)) | 0; return ((Math.abs(h) % 50) - 25) / 10; }
 
 /* Проверяет и чинит данные доски (из браузера или из свитка). */
@@ -402,6 +418,7 @@ function normalize(data){
       title: String(raw.title == null ? '' : raw.title).slice(0,120),
       text: String(raw.text == null ? '' : raw.text).slice(0,2000),
       stamp: String(raw.stamp == null ? '' : raw.stamp).slice(0,24),
+      img: cleanImg(raw.img), // в старых досках картинок нет — тогда просто пусто
       x: Math.round(num(raw.x, 0)), y: Math.round(num(raw.y, 0)),
       rot: num(raw.rot, rotFor(id))
     });
@@ -520,7 +537,9 @@ function cardNode(c){
   const kl = document.createElement('span'); kl.textContent = t.label.toLowerCase();
   kind.append(glyph, kl);
   const h = document.createElement('h3'); h.textContent = c.title || 'Без названия';
-  el.append(pin, kind, h);
+  el.append(pin);
+  if (c.img){ const im = document.createElement('img'); im.className = 'portrait'; im.alt = ''; im.draggable = false; im.src = c.img; el.append(im); }
+  el.append(kind, h);
   if (c.text){ const p = document.createElement('p'); p.textContent = c.text; el.append(p); }
   if (c.stamp){ const s = document.createElement('span'); s.className = 'stamp'; s.textContent = c.stamp; el.append(s); }
   if (selected === c.id && !linkMode){
@@ -720,6 +739,55 @@ function buildTypeChips(){
     box.append(input, label);
   }
 }
+/* Картинка записи: уменьшаем и храним как текст (data URL) прямо в доске. */
+let editingImg = '', imgToken = 0;
+function showImg(src){
+  editingImg = src || '';
+  const prev = $('fImgPreview');
+  prev.hidden = !editingImg;
+  if (editingImg) prev.src = editingImg; else prev.removeAttribute('src');
+  $('fImgClear').hidden = !editingImg;
+  $('fImgPick').textContent = editingImg ? 'Заменить картинку…' : 'Выбрать картинку…';
+}
+function shrinkImage(file, done){
+  const url = URL.createObjectURL(file), im = new Image();
+  im.onload = () => {
+    URL.revokeObjectURL(url);
+    try {
+      const k = Math.min(1, IMG_W / im.naturalWidth, IMG_H / im.naturalHeight);
+      const w = Math.max(1, Math.round(im.naturalWidth * k)), h = Math.max(1, Math.round(im.naturalHeight * k));
+      let src = im, sw = im.naturalWidth, sh = im.naturalHeight;
+      while (sw > w * 2){ // уменьшаем по половине за раз — так картинка остаётся чёткой
+        const t = document.createElement('canvas'); t.width = Math.round(sw/2); t.height = Math.round(sh/2);
+        t.getContext('2d').drawImage(src, 0, 0, t.width, t.height);
+        src = t; sw = t.width; sh = t.height;
+      }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      g.fillStyle = '#f3e6c6'; g.fillRect(0, 0, w, h); // фон под прозрачные места
+      g.drawImage(src, 0, 0, w, h);
+      done(c.toDataURL('image/jpeg', 0.85));
+    } catch (_) { done(''); }
+  };
+  im.onerror = () => { URL.revokeObjectURL(url); done(''); };
+  im.src = url;
+}
+const submitBtn = $('cardForm').querySelector('[type="submit"]');
+$('fImgPick').addEventListener('click', () => $('fImg').click());
+$('fImgClear').addEventListener('click', () => { showImg(''); $('fImgMsg').textContent = ''; });
+$('fImg').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const token = ++imgToken;
+  submitBtn.disabled = true; $('fImgMsg').textContent = 'Уменьшаю картинку…';
+  shrinkImage(f, src => {
+    if (token !== imgToken) return;
+    submitBtn.disabled = false;
+    if (src){ showImg(src); $('fImgMsg').textContent = ''; }
+    else $('fImgMsg').textContent = 'Не получилось открыть этот файл. Попробуй картинку в формате JPG или PNG.';
+  });
+});
+
 let lastType = 'clue';
 function openCard(id){
   const c = id ? byId(id) : null;
@@ -733,12 +801,14 @@ function openCard(id){
   const stamps = STAMPS.slice(); if (c && c.stamp && !stamps.includes(c.stamp)) stamps.push(c.stamp);
   for (const s of stamps){ const o = document.createElement('option'); o.value = s; o.textContent = s || 'без печати'; sel.append(o); }
   sel.value = c ? c.stamp : '';
+  imgToken++; submitBtn.disabled = false; $('fImgMsg').textContent = '';
+  showImg(c ? c.img : '');
   openModal('cardModal', $('fTitle'));
 }
 $('cardForm').addEventListener('submit', e => {
   e.preventDefault();
   const checked = document.querySelector('input[name="ctype"]:checked');
-  const data = { type: checked ? checked.value : 'note', title: $('fTitle').value.trim(), text: $('fText').value.trim(), stamp: $('fStamp').value };
+  const data = { type: checked ? checked.value : 'note', title: $('fTitle').value.trim(), text: $('fText').value.trim(), stamp: $('fStamp').value, img: editingImg };
   lastType = data.type;
   if (editingId){ Object.assign(byId(editingId), data); }
   else {
