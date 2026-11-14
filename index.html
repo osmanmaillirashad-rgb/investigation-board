@@ -1137,7 +1137,7 @@ function addMoveRow(b){ // под доской: «В папку: [Без пап�
   }
   $('boardList').append(li);
 }
-function addFolderItem(fo){ // строка папки: [▾ имя  N досок] [✎] [✕]
+function addFolderItem(fo){ // строка папки: [▾ имя, под ним «N досок»] [✎] [✕]
   const li = document.createElement('li'); li.className = 'folder-item'; li.dataset.folder = fo.id; li.dataset.key = 'f:' + fo.id;
   const n = lib.boards.filter(b => b.folder === fo.id).length;
   if (renamingFolder === fo.id){ // режим переименования: вместо названия — поле ввода
