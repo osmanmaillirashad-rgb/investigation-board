@@ -177,14 +177,39 @@ body{
 .board-meta{font-size:13px;font-style:italic;opacity:.75}
 .board-del{flex:none;min-width:40px;padding:0 8px;cursor:pointer;font-family:var(--font-ui);font-size:14px;color:#e8b7a8;background:transparent;border:1px solid #4a3218;border-radius:6px}
 .board-del.confirm{color:#fff2e8;background:#8a1a12;border-color:#d0574a}
-.board-open:focus-visible,.board-del:focus-visible,.board-pin:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
+.board-open:focus-visible,.board-del:focus-visible,.board-pin:focus-visible,.board-move:focus-visible,
+.folder-head:focus-visible,.folder-btn:focus-visible,.move-to:focus-visible{outline:2px solid #f3d48a;outline-offset:2px}
 .board-caption{margin:4px 2px 0;font-family:var(--font-ui);font-size:13px;letter-spacing:.12em;color:var(--brass)}
 /* Кнопка закрепления 📌: серая и бледная — обычная доска, цветная — закреплённая */
-.board-pin{flex:none;min-width:40px;display:grid;place-items:center;cursor:pointer;background:transparent;border:1px solid #4a3218;border-radius:6px}
-.board-pin:hover{border-color:var(--brass)}
+.board-pin,.board-move,.folder-btn{flex:none;min-width:40px;display:grid;place-items:center;cursor:pointer;font-size:15px;color:#efdfbd;background:transparent;border:1px solid #4a3218;border-radius:6px}
+.board-pin:hover,.board-move:hover,.folder-btn:hover{border-color:var(--brass)}
 .pin-icon{font-size:17px;line-height:1;opacity:.35;filter:grayscale(1)}
 .board-pin:hover .pin-icon{opacity:.7}
 .board-pin[aria-pressed="true"] .pin-icon{opacity:1;filter:none}
+/* Папки: строка-заголовок папки, доски внутри неё с отступом, выбор папки для доски */
+.side-actions{display:flex;gap:6px}
+.side-actions .primary{flex:1}
+.board-item.in-folder{margin-left:8px;padding-left:8px;border-left:2px solid #5a3d1e}
+.folder-item{display:flex;gap:4px;margin-top:4px}
+.folder-head{
+  flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;text-align:left;
+  font:inherit;color:#efdfbd;background:transparent;border:1px solid transparent;border-radius:6px;
+}
+.folder-head:hover{border-color:#4a3218}
+.folder-arrow{flex:none;width:12px;font-size:12px;color:var(--brass)}
+.folder-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px} /* две строки: название, под ним число досок */
+.folder-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-size:17px;line-height:1.25;color:#f4e7c8}
+.folder-count{font-size:13px;font-style:italic;opacity:.75}
+.folder-input{
+  flex:1;min-width:0;padding:6px 10px;font-family:var(--font-display);font-size:17px;color:var(--ink);
+  background:var(--parchment);border:1px solid var(--brass);border-radius:6px;
+}
+.folder-input:focus-visible{outline:2px solid #f3d48a;outline-offset:1px}
+.move-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 4px 8px;padding:8px;border:1px dashed #5a3d1e;border-radius:6px}
+.move-row span{font-size:13px;font-style:italic;color:#efdfbd;opacity:.8}
+.move-to{min-height:32px;padding:3px 10px;cursor:pointer;font-family:var(--font-ui);font-size:14px;color:#efdfbd;background:transparent;border:1px solid #6b4a24;border-radius:999px}
+.move-to:hover{border-color:var(--brass)}
+.move-to[aria-pressed="true"]{color:var(--ink);background:var(--parchment);border-color:var(--brass)}
 /* Красный язычок-закладка слева: открывает и закрывает список досок */
 .side-tab{
   position:absolute;left:-10px;top:26px;z-index:11;padding:16px 8px 16px 18px;cursor:pointer;
@@ -277,7 +302,10 @@ body{
     <b>Доски</b>
     <button id="sideClose" class="btn ghost" type="button" aria-label="Закрыть список досок">✕</button>
   </div>
-  <button id="newBoardBtn" class="btn primary" type="button">+ Новая доска</button>
+  <div class="side-actions">
+    <button id="newBoardBtn" class="btn primary" type="button">+ Новая доска</button>
+    <button id="newFolderBtn" class="btn" type="button">+ Папка</button>
+  </div>
   <ul id="boardList" class="board-list"></ul>
 </aside>
 <button id="boardsBtn" class="side-tab" type="button" aria-expanded="false" aria-controls="sidebar"><span>Доски</span></button>
@@ -505,11 +533,21 @@ function loadSaved(){
   return null;
 }
 
-/* Библиотека досок: { current: id открытой доски, boards: [{ id, shared, pinned, title, cards, links }] }.
+/* Библиотека досок: { current: id открытой доски, folders: [{ id, name, open }], boards: [{ id, shared, pinned, folder, title, cards, links }] }.
    shared: true — это копия общей доски из board.json (такая доска может быть только одна).
-   pinned: true — доска закреплена наверху списка. */
-const newBoardEntry = () => ({ id: uid(), shared: false, pinned: false, title: 'Новое дело', cards: [], links: [] });
+   pinned: true — доска закреплена наверху списка.
+   folder — id папки, в которой лежит доска ('' — без папки). У папки open: true — раскрыта, false — свёрнута. */
+const newBoardEntry = () => ({ id: uid(), shared: false, pinned: false, folder: '', title: 'Новое дело', cards: [], links: [] });
 function normalizeLib(data){
+  // сначала папки — чтобы потом у каждой доски проверить, что её папка существует
+  const folders = [], fids = new Set();
+  for (const raw of (data && Array.isArray(data.folders) ? data.folders : [])){ // в старых библиотеках папок нет — будет пустой список
+    if (!raw || typeof raw !== 'object') continue;
+    let id = cleanId(raw.id) || uid();
+    while (fids.has(id)) id = uid();
+    fids.add(id);
+    folders.push({ id, name: String(raw.name == null ? '' : raw.name).trim().slice(0,60) || 'Новая папка', open: raw.open !== false });
+  }
   const boards = [], ids = new Set();
   let hasShared = false;
   for (const raw of (data && Array.isArray(data.boards) ? data.boards : [])){
@@ -518,22 +556,23 @@ function normalizeLib(data){
     while (ids.has(id)) id = uid();
     ids.add(id);
     const shared = raw.shared === true && !hasShared; if (shared) hasShared = true;
-    boards.push({ id, shared, pinned: raw.pinned === true, title: b.title, cards: b.cards, links: b.links }); // в старых библиотеках pinned нет — значит, не закреплена
+    const folder = cleanId(raw.folder); // такой папки нет (или поля нет вовсе) — доска без папки
+    boards.push({ id, shared, pinned: raw.pinned === true, folder: fids.has(folder) ? folder : '', title: b.title, cards: b.cards, links: b.links }); // в старых библиотеках pinned нет — значит, не закреплена
   }
   if (!boards.length) throw new Error('В библиотеке нет досок.');
-  return { current: boards.some(b => b.id === data.current) ? data.current : boards[0].id, boards };
+  return { current: boards.some(b => b.id === data.current) ? data.current : boards[0].id, folders, boards };
 }
 function loadLibrary(){
   try { const raw = localStorage.getItem(LIB_KEY); if (raw) return normalizeLib(JSON.parse(raw)); } catch (_) {}
   const old = loadSaved(); // переход со старого формата: одна доска становится первой доской библиотеки
-  if (old) return { current:'b1', boards:[{ id:'b1', shared:false, pinned:false, title: old.title, cards: old.cards, links: old.links }] };
+  if (old) return { current:'b1', folders:[], boards:[{ id:'b1', shared:false, pinned:false, folder:'', title: old.title, cards: old.cards, links: old.links }] };
   return null;
 }
 
 /* ── Состояние ──
    lib — все доски этого браузера, state — открытая сейчас доска из lib. */
 const savedLib = loadLibrary();
-let lib = savedLib || { current:'b1', boards:[{ id:'b1', shared:false, pinned:false, title:'', cards:[], links:[] }] };
+let lib = savedLib || { current:'b1', folders:[], boards:[{ id:'b1', shared:false, pinned:false, folder:'', title:'', cards:[], links:[] }] };
 let state = lib.boards.find(b => b.id === lib.current);
 let waitingShared = !savedLib; // в браузере ещё нет ни одной доски — при запуске загрузим общую из board.json
 function putBoard(data){ state.title = data.title; state.cards = data.cards; state.links = data.links; } // заменить содержимое открытой доски
@@ -1002,7 +1041,7 @@ $('sharedBtn').addEventListener('click', () => {
   fetchShared()
     .then(data => {
       let entry = lib.boards.find(x => x.shared);
-      if (!entry){ entry = { id: uid(), shared: true }; lib.boards.unshift(entry); } // первый раз — добавляем в список отдельной доской
+      if (!entry){ entry = { id: uid(), shared: true, pinned: false, folder: '' }; lib.boards.unshift(entry); } // первый раз — добавляем в список отдельной доской
       Object.assign(entry, { title: data.title, cards: data.cards, links: data.links });
       openBoard(entry.id); save(); closeModals(); setStatus('Загружена общая доска', true);
     })
@@ -1030,27 +1069,51 @@ caseEl.addEventListener('paste', e => {
 
 /* ── Боковая панель: список досок ── */
 const narrow = () => window.innerWidth < 700; // на узком экране панель закрывает почти всю доску
+let movingId = null;       // id доски, у которой сейчас открыт выбор папки
+let renamingFolder = null; // id папки, у которой сейчас меняют название
+const folderById = id => lib.folders.find(x => x.id === id);
 function renderSidebar(){
   const list = $('boardList');
-  // запоминаем, на какой кнопке стоял фокус клавиатуры, чтобы вернуть его после перерисовки
   const f = document.activeElement;
-  const keep = f && list.contains(f) && f.dataset.act ? [f.closest('.board-item').dataset.id, f.dataset.act] : null;
+  if (renamingFolder && f && f.classList.contains('folder-input')) return; // человек печатает название папки — не перерисовываем у него под руками
+  // запоминаем, на какой кнопке стоял фокус клавиатуры, чтобы вернуть его после перерисовки
+  const row = f && list.contains(f) && f.dataset.act ? f.closest('[data-key]') : null;
+  const keep = row ? [row.dataset.key, f.dataset.act] : null;
   list.textContent = '';
   const caption = text => { const li = document.createElement('li'); li.className = 'board-caption'; li.textContent = text; list.append(li); };
-  const pinned = lib.boards.filter(b => b.pinned), rest = lib.boards.filter(b => !b.pinned);
-  if (pinned.length){ caption('Закреплённые'); pinned.forEach(addBoardItem); if (rest.length) caption('Остальные'); }
-  rest.forEach(addBoardItem);
-  if (keep){ const el = list.querySelector(`.board-item[data-id="${keep[0]}"] [data-act="${keep[1]}"]`); if (el) el.focus(); }
+  const pinned = lib.boards.filter(b => b.pinned);                  // закреплённые — всегда наверху, из какой бы папки ни были
+  const loose = lib.boards.filter(b => !b.pinned && !b.folder);     // без папки
+  if (pinned.length){ caption('Закреплённые'); pinned.forEach(b => addBoardItem(b, 'pinned')); }
+  for (const fo of lib.folders){
+    addFolderItem(fo);
+    if (fo.open) lib.boards.filter(b => !b.pinned && b.folder === fo.id).forEach(b => addBoardItem(b, 'folder'));
+  }
+  if (loose.length && (pinned.length || lib.folders.length)) caption(lib.folders.length ? 'Без папки' : 'Остальные');
+  loose.forEach(b => addBoardItem(b, 'loose'));
+  const input = list.querySelector('.folder-input');
+  if (input){ input.focus(); input.select(); }  // только что начали переименование — сразу ставим курсор в поле
+  else if (keep){ const el = list.querySelector(`[data-key="${keep[0]}"] [data-act="${keep[1]}"]`); if (el) el.focus(); }
 }
-function addBoardItem(b){ // одна строчка списка: [название и число записей] [булавка] [✕]
+function addBoardItem(b, where){ // одна строчка списка: [название и число записей] [📁] [📌] [✕]
   const li = document.createElement('li');
-  li.className = 'board-item' + (b.id === lib.current ? ' current' : ''); li.dataset.id = b.id;
+  li.className = 'board-item' + (b.id === lib.current ? ' current' : '') + (where === 'folder' ? ' in-folder' : '');
+  li.dataset.id = b.id; li.dataset.key = 'b:' + b.id;
   const open = document.createElement('button'); open.type = 'button'; open.className = 'board-open'; open.dataset.act = 'open';
   if (b.id === lib.current) open.setAttribute('aria-current', 'true');
   const name = document.createElement('span'); name.className = 'board-name'; name.textContent = b.title || 'Новое дело';
   const meta = document.createElement('span'); meta.className = 'board-meta';
-  meta.textContent = (b.shared ? 'общая · ' : '') + b.cards.length + ' ' + plural(b.cards.length, 'запись', 'записи', 'записей');
+  const fo = where === 'pinned' && b.folder ? folderById(b.folder) : null; // у закреплённой доски подписываем, из какой она папки
+  meta.textContent = (b.shared ? 'общая · ' : '') + (fo ? fo.name + ' · ' : '') + b.cards.length + ' ' + plural(b.cards.length, 'запись', 'записи', 'записей');
   open.append(name, meta);
+  li.append(open);
+  if (lib.folders.length){ // пока папок нет, кнопка 📁 не нужна — некуда перемещать
+    const move = document.createElement('button'); move.type = 'button'; move.className = 'board-move'; move.dataset.act = 'move';
+    move.title = 'Переместить в папку';
+    move.setAttribute('aria-label', `Переместить доску «${b.title || 'Новое дело'}» в папку`);
+    move.setAttribute('aria-expanded', movingId === b.id ? 'true' : 'false');
+    move.innerHTML = '<span aria-hidden="true">📁</span>';
+    li.append(move);
+  }
   const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'board-pin'; pin.dataset.act = 'pin';
   pin.setAttribute('aria-pressed', b.pinned ? 'true' : 'false');
   pin.title = b.pinned ? 'Открепить' : 'Закрепить наверху';
@@ -1058,8 +1121,72 @@ function addBoardItem(b){ // одна строчка списка: [назван
   pin.innerHTML = '<span class="pin-icon" aria-hidden="true">📌</span>';
   const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del';
   del.textContent = '✕'; del.setAttribute('aria-label', `Удалить доску «${b.title || 'Новое дело'}»`);
-  li.append(open, pin, del);
+  li.append(pin, del);
   $('boardList').append(li);
+  if (movingId === b.id) addMoveRow(b);
+}
+function addMoveRow(b){ // под доской: «В папку: [Без папки] [Вторник] [Пятница]»
+  const li = document.createElement('li'); li.className = 'move-row'; li.dataset.id = b.id; li.dataset.key = 'm:' + b.id;
+  const label = document.createElement('span'); label.textContent = 'В папку:';
+  li.append(label);
+  for (const target of [{ id: '', name: 'Без папки' }, ...lib.folders]){
+    const t = document.createElement('button'); t.type = 'button'; t.className = 'move-to'; t.dataset.act = 'move-to'; t.dataset.folder = target.id;
+    t.textContent = target.name;
+    t.setAttribute('aria-pressed', b.folder === target.id ? 'true' : 'false'); // подсвечиваем папку, где доска лежит сейчас
+    li.append(t);
+  }
+  $('boardList').append(li);
+}
+function addFolderItem(fo){ // строка папки: [▾ имя  N досок] [✎] [✕]
+  const li = document.createElement('li'); li.className = 'folder-item'; li.dataset.folder = fo.id; li.dataset.key = 'f:' + fo.id;
+  const n = lib.boards.filter(b => b.folder === fo.id).length;
+  if (renamingFolder === fo.id){ // режим переименования: вместо названия — поле ввода
+    const input = document.createElement('input'); input.type = 'text'; input.className = 'folder-input'; input.dataset.act = 'rename';
+    input.value = fo.name; input.maxLength = 60; input.setAttribute('aria-label', 'Название папки');
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter'){ e.preventDefault(); finishRename(fo, input.value); }
+      else if (e.key === 'Escape'){ e.stopPropagation(); finishRename(fo, null); } // Esc — отменить, панель не закрывать
+    });
+    input.addEventListener('blur', () => finishRename(fo, input.value)); // щёлкнули мимо — сохраняем
+    li.append(input);
+    $('boardList').append(li);
+    return;
+  }
+  const head = document.createElement('button'); head.type = 'button'; head.className = 'folder-head'; head.dataset.act = 'toggle';
+  head.setAttribute('aria-expanded', fo.open ? 'true' : 'false');
+  head.title = fo.open ? 'Свернуть папку' : 'Развернуть папку';
+  const arrow = document.createElement('span'); arrow.className = 'folder-arrow'; arrow.setAttribute('aria-hidden', 'true'); arrow.textContent = fo.open ? '▾' : '▸';
+  const name = document.createElement('span'); name.className = 'folder-name'; name.textContent = '📁 ' + fo.name;
+  const count = document.createElement('span'); count.className = 'folder-count'; count.textContent = n + ' ' + plural(n, 'доска', 'доски', 'досок');
+  const text = document.createElement('span'); text.className = 'folder-text'; text.append(name, count);
+  head.append(arrow, text);
+  const ren = document.createElement('button'); ren.type = 'button'; ren.className = 'folder-btn'; ren.dataset.act = 'rename';
+  ren.textContent = '✎'; ren.title = 'Переименовать'; ren.setAttribute('aria-label', `Переименовать папку «${fo.name}»`);
+  const del = document.createElement('button'); del.type = 'button'; del.className = 'board-del'; del.dataset.act = 'del-folder';
+  del.textContent = '✕'; del.title = 'Удалить папку (доски останутся)'; del.setAttribute('aria-label', `Удалить папку «${fo.name}»`);
+  li.append(head, ren, del);
+  $('boardList').append(li);
+}
+function finishRename(fo, value){
+  if (renamingFolder !== fo.id) return; // уже закончили (Enter, а потом ещё и blur) — второй раз не делаем
+  renamingFolder = null;
+  if (value != null) fo.name = value.trim().slice(0,60) || 'Новая папка'; // null — это отмена через Esc
+  renderSidebar(); save();
+}
+function folderAction(act, fid, btn){
+  const fo = folderById(fid); if (!fo) return;
+  if (act === 'toggle'){ fo.open = !fo.open; renderSidebar(); save(); }
+  else if (act === 'rename'){ renamingFolder = fid; movingId = null; renderSidebar(); }
+  else if (act === 'del-folder'){
+    if (!btn.classList.contains('confirm')){ // первое нажатие — переспрашиваем, как у досок
+      btn.classList.add('confirm'); btn.textContent = 'Удалить?';
+      setTimeout(() => { if (btn.isConnected){ btn.classList.remove('confirm'); btn.textContent = '✕'; } }, 3000);
+      return;
+    }
+    lib.folders = lib.folders.filter(x => x.id !== fid);
+    for (const b of lib.boards) if (b.folder === fid) b.folder = ''; // доски не удаляем — они переезжают в «Без папки»
+    renderSidebar(); save(); setStatus('Папка удалена, её доски теперь без папки', true);
+  }
 }
 function openBoard(id){
   const b = lib.boards.find(x => x.id === id); if (!b) return;
@@ -1087,10 +1214,26 @@ $('newBoardBtn').addEventListener('click', () => {
   const r = document.createRange(); r.selectNodeContents(caseEl);
   const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
 });
+$('newFolderBtn').addEventListener('click', () => {
+  const fo = { id: uid(), name: 'Новая папка', open: true };
+  lib.folders.unshift(fo);           // новая папка — первой в списке папок
+  renamingFolder = fo.id; movingId = null;
+  renderSidebar(); save();           // renderSidebar сразу покажет поле для названия
+});
 $('boardList').addEventListener('click', e => {
   const btn = e.target.closest('[data-act]'); if (!btn) return;
-  const id = btn.closest('.board-item').dataset.id;
-  if (btn.dataset.act === 'open'){
+  const row = btn.closest('[data-key]');
+  if (row.classList.contains('folder-item')){ folderAction(btn.dataset.act, row.dataset.folder, btn); return; } // кнопки папки
+  const id = row.dataset.id;
+  if (btn.dataset.act === 'move'){ movingId = movingId === id ? null : id; renderSidebar(); } // открыть/закрыть выбор папки
+  else if (btn.dataset.act === 'move-to'){
+    const b = lib.boards.find(x => x.id === id), fo = folderById(btn.dataset.folder);
+    b.folder = fo ? fo.id : '';
+    if (fo) fo.open = true; // переложили в свёрнутую папку — раскрываем её, чтобы доска не «пропала»
+    movingId = null;
+    renderSidebar(); save(); setStatus(fo ? `Доска перемещена в «${fo.name}»` : 'Доска теперь без папки', true);
+  }
+  else if (btn.dataset.act === 'open'){
     if (id !== lib.current){ openBoard(id); save(); }
     if (narrow()) closeSidebar();
   } else if (btn.dataset.act === 'pin'){
